@@ -1,0 +1,23 @@
+{
+  "name": "mapa-poder-mexico",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @mapa/web",
+    "build": "npm run build --workspace @mapa/web",
+    "lint": "npm run lint --workspace @mapa/web",
+    "test": "npm run test --workspace @mapa/web",
+    "typecheck": "npm run typecheck --workspace @mapa/web"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.116.0"
+  }
+}

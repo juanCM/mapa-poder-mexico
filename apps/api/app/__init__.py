@@ -1,0 +1,1 @@
+"""Mapa de Poder API."""
