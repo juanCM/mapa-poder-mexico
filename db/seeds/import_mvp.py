@@ -4,6 +4,8 @@ Uso:
     DATABASE_URL=postgresql://... python db/seeds/import_mvp.py
 """
 
+from __future__ import annotations
+
 import json
 import os
 from datetime import date, timedelta

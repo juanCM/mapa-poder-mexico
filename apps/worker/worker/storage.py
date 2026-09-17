@@ -26,7 +26,8 @@ class SupabaseSnapshotStorage:
             endpoint,
             content=content,
             headers={
-                "Authorization": f"Bearer {self.service_key}",
+                # Las secret keys modernas (sb_secret_...) no son JWT. Enviarlas
+                # como Bearer provoca "Invalid Compact JWS" en Storage.
                 "apikey": self.service_key,
                 "Content-Type": mime_type,
                 "x-upsert": "false",

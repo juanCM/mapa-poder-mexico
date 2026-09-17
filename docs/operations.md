@@ -11,7 +11,7 @@ Nunca reutilizar llaves de servicio, buckets ni bases de datos entre entornos.
 ## Despliegue inicial
 
 1. Crear el proyecto Supabase, ejecutar `db/migrations/0001_initial.sql` y crear el bucket privado `source-documents`.
-2. Configurar un proveedor de correo de Supabase Auth y `ADMIN_EMAIL_ALLOWLIST`.
+2. En Supabase Auth, crear la persona administradora con correo y contraseña; conservar ese correo en `ADMIN_EMAIL_ALLOWLIST`.
 3. Importar el conjunto inicial con `db/seeds/import_mvp.py`.
 4. Crear servicios Railway separados para `apps/api` y `apps/worker`.
 5. Configurar en Railway `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `PUBLIC_WEB_ORIGIN` y `ADMIN_API_TOKEN`.
