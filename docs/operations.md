@@ -16,7 +16,7 @@ Nunca reutilizar llaves de servicio, buckets ni bases de datos entre entornos.
 4. Crear servicios Railway separados para `apps/api` y `apps/worker`.
 5. Configurar en Railway `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `PUBLIC_WEB_ORIGIN` y `ADMIN_API_TOKEN`.
 6. Configurar en Vercel `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, las variables públicas de Supabase y la lista de administradores.
-7. Programar tres ejecuciones Railway: Gobierno y DOF diariamente; LeyesBiblio semanalmente.
+7. Programar las ejecuciones Railway: `apf` diariamente, Gobierno y DOF diariamente, y LeyesBiblio semanalmente.
 
 ## Flujo editorial
 
@@ -40,6 +40,39 @@ Nunca reutilizar llaves de servicio, buckets ni bases de datos entre entornos.
 2. Añadir un fixture HTML/PDF representativo y una prueba contractual.
 3. Registrar la fuente con su editor, URL canónica, nivel de confianza y frecuencia.
 4. Ejecutar manualmente y revisar todos los candidatos antes de programarla.
+
+## Cobertura de la Administración Pública Federal
+
+El adaptador `apf` registra dos fuentes de cobertura institucional:
+
+1. la LOAPF para la Administración Pública Centralizada; y
+2. la relación de entidades paraestatales publicada por el DOF.
+
+Ejecutar `mapa-ingest apf` crea candidatos verificables, no publicaciones
+automáticas. La fuente transversal para personas es el portal público Nómina
+Transparente, que se consulta por ramo, institución y página; los directorios
+institucionales complementan perfiles y vigencia. No se debe convertir una
+consulta masiva de nómina en millones de tareas individuales: primero debe
+existir un mecanismo de importación por lote, deduplicación de personas,
+historial de ocupación y aprobación editorial por lote. Antes de declarar una
+cobertura como completa, verificar que cada registro tenga fuente, vigencia y
+revisión editorial.
+
+Una vez aprobados, publicar con `mapa-ingest publish-approved --adapter apf`.
+Esta operación crea nodos, organizaciones, relaciones, afirmaciones publicadas
+y enlaces de evidencia en una transacción. Sólo deben publicarse candidatos que
+hayan sido revisados y aprobados.
+
+Para una carga amplia, publicar en lotes (`--limit 25`) hasta que no queden
+tareas aprobadas; esto acota la duración de cada transacción y facilita una
+recuperación segura si una fuente o conexión falla.
+
+Para personas, `mapa-ingest nomina` obtiene una página de Nómina Transparente
+y crea candidatos `persona —HOLDS→ cargo`. Configurar la clave pública del
+portal, ramo, UR, desplazamiento y límite mediante `NOMINA_TRANSPARENTE_API_KEY`,
+`NOMINA_APF_RAMO`, `NOMINA_APF_UR`, `NOMINA_APF_OFFSET` y `NOMINA_APF_LIMIT`.
+El publicador crea de forma idempotente la persona, el cargo, su organización,
+la relación de ocupación y la evidencia después de la aprobación editorial.
 
 ## Incidentes de datos
 

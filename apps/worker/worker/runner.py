@@ -28,7 +28,10 @@ class IngestionRunner:
         all_candidates: list[CandidateAssertion] = []
         snapshots = 0
         try:
-            for document in self.adapter.discover():
+            documents = self.adapter.discover()
+            if sink and run_id:
+                sink.record_discovered_count(run_id, len(documents))
+            for document in documents:
                 fetched = self.adapter.fetch(document)
                 digest = self.adapter.fingerprint(fetched.content)
                 extension = extension_for(fetched.mime_type)

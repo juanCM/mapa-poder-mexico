@@ -36,6 +36,13 @@ class CandidateAssertion:
     source_excerpt: str
     confidence: float
     extraction_method: str
+    # Estos campos permiten que la cola editorial distinga un hallazgo de
+    # catálogo (institución/persona/cargo) de una relación. Son opcionales
+    # para mantener la compatibilidad con los adaptadores legales existentes.
+    subject_kind: str | None = None
+    object_kind: str | None = None
+    jurisdiction: str = "Federal"
+    metadata: dict[str, Any] = field(default_factory=dict)
     status: str = "needs_review"
 
     def as_dict(self) -> dict[str, Any]:
