@@ -5,8 +5,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from worker.adapters.apf import ApfCatalogAdapter
+from worker.adapters.congress import CongressRosterAdapter
 from worker.adapters.dof import DofAdapter
 from worker.adapters.gobierno import GobiernoMxAdapter
+from worker.adapters.leadership import (
+    AutonomousLeadershipAdapter,
+    CabinetLeadershipAdapter,
+    FederalLeadershipAdapter,
+    JudicialLeadershipAdapter,
+)
 from worker.adapters.leyesbiblio import LeyesBiblioAdapter
 from worker.adapters.nomina import NominaTransparenteAdapter
 from worker.publisher import ApprovedCandidatePublisher
@@ -18,6 +25,11 @@ ADAPTERS = {
     "leyesbiblio": LeyesBiblioAdapter,
     "nomina": NominaTransparenteAdapter,
     "dof": DofAdapter,
+    "congress": CongressRosterAdapter,
+    "cabinet": CabinetLeadershipAdapter,
+    "judicial": JudicialLeadershipAdapter,
+    "autonomous": AutonomousLeadershipAdapter,
+    "leadership": FederalLeadershipAdapter,
 }
 
 
@@ -29,6 +41,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingiere fuentes oficiales o publica candidatos aprobados.")
     parser.add_argument("command", choices=[*sorted(ADAPTERS), "publish-approved"])
     parser.add_argument("--adapter", choices=sorted(ADAPTERS), help="Limita la publicación a un adaptador.")
+    parser.add_argument("--batch-id", help="Publica únicamente las tareas aprobadas de este lote editorial.")
     parser.add_argument("--limit", type=int, help="Publica como máximo este número de tareas aprobadas.")
     args = parser.parse_args()
     if args.command == "publish-approved":
@@ -36,7 +49,7 @@ def main() -> None:
         if not database_url:
             parser.error("DATABASE_URL is required to publish approved candidates")
         adapter_key = ADAPTERS[args.adapter]().key if args.adapter else None
-        print(dump_result(ApprovedCandidatePublisher(database_url).publish(adapter_key, args.limit).as_dict()))
+        print(dump_result(ApprovedCandidatePublisher(database_url).publish(adapter_key, args.limit, args.batch_id).as_dict()))
         return
     print(dump_result(IngestionRunner(ADAPTERS[args.command]()).run()))
 

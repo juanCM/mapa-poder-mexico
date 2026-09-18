@@ -37,7 +37,7 @@ class IngestionRunner:
                 extension = extension_for(fetched.mime_type)
                 key = f"{self.adapter.key}/{fetched.retrieved_at:%Y/%m/%d}/{digest}.{extension}"
                 storage_path = self.storage.put(key, fetched.content, fetched.mime_type)
-                inserted = sink.record_snapshot(run_id, fetched, digest, storage_path) if sink and run_id else True
+                inserted = sink.record_snapshot(run_id, fetched, digest, storage_path, self.adapter.key) if sink and run_id else True
                 snapshots += int(inserted)
                 all_candidates.extend(self.adapter.emit_candidates(fetched))
             persisted = sink.emit(run_id, all_candidates) if sink and run_id else 0

@@ -1,8 +1,19 @@
+from pathlib import Path
+
 from worker.adapters.apf import CENTRAL_APF, ApfCatalogAdapter
+from worker.adapters.congress import CongressRosterAdapter
 from worker.adapters.gobierno import GobiernoMxAdapter
+from worker.adapters.leadership import (
+    AutonomousLeadershipAdapter,
+    CabinetLeadershipAdapter,
+    FederalLeadershipAdapter,
+    JudicialLeadershipAdapter,
+)
 from worker.adapters.nomina import NominaTransparenteAdapter
 from worker.models import DiscoveredDocument, FetchResult
 from worker.publisher import person_name_parts, slugify
+
+FIXTURES = Path(__file__).resolve().parents[3] / "sources" / "fixtures"
 
 
 def test_gobierno_adapter_emits_review_candidates_only():
@@ -69,3 +80,153 @@ def test_nomina_adapter_creates_person_position_candidates():
     assert candidate.predicate == "HOLDS"
     assert candidate.metadata["positionOrganizationLabel"] == "Secretaria de Ejemplo"
     assert candidate.metadata["sourceDocumentSlug"] == "nomina_apf_6_100_0"
+
+
+def test_congress_adapter_models_stable_seats_and_real_vacancies():
+    content = (FIXTURES / "congreso_lxvi_diputaciones.html").read_bytes()
+    document = CongressRosterAdapter().discover()[0]
+    result = FetchResult(document, document.url, 200, "text/html", content)
+    candidates = CongressRosterAdapter().emit_candidates(result)
+
+    assert len(candidates) == 3
+    assert len({candidate.metadata["seatKey"] for candidate in candidates}) == 3
+    vacancy = next(candidate for candidate in candidates if candidate.metadata["occupancyStatus"] == "vacant")
+    assert vacancy.subject_kind == "position"
+    assert vacancy.object_kind == "organization"
+    assert vacancy.predicate == "PART_OF"
+    occupied = next(candidate for candidate in candidates if candidate.subject_label == "Ana López García")
+    assert occupied.object_kind == "position"
+    assert occupied.metadata["district"] == 3
+    assert occupied.metadata["officialPortraitUrl"].endswith("/retratos/1.jpg")
+
+
+def test_leadership_adapter_requires_official_profiles_and_numbered_seats():
+    content = (FIXTURES / "liderazgo_colegiado.html").read_bytes()
+    document = next(item for item in FederalLeadershipAdapter().discover() if item.source_key == "directorio_ine_consejo")
+    result = FetchResult(document, document.url, 200, "text/html", content)
+    candidates = FederalLeadershipAdapter().emit_candidates(result)
+
+    assert len(candidates) == 2
+    assert all(candidate.predicate == "HOLDS" for candidate in candidates)
+    assert all(candidate.metadata["isCollegial"] for candidate in candidates)
+    assert candidates[0].metadata["officialProfileUrl"].startswith("https://www.ine.mx/")
+    assert candidates[0].metadata["officialPortraitUrl"].startswith("https://www.ine.mx/")
+
+
+def test_cabinet_adapter_supports_official_profile_rosters_and_acting_holders():
+    content = (FIXTURES / "gabinete_legal.html").read_bytes()
+    adapter = CabinetLeadershipAdapter()
+    document = adapter.discover()[0]
+    candidates = adapter.emit_candidates(FetchResult(document, document.url, 200, "text/html", content))
+
+    assert len(candidates) == 2
+    assert {candidate.metadata["positionOrganizationLabel"] for candidate in candidates} == {
+        "Dependencia Uno",
+        "Dependencia Dos",
+    }
+    acting = next(candidate for candidate in candidates if candidate.metadata["occupancyStatus"] == "acting")
+    assert acting.metadata["officialProfileUrl"].startswith("https://www.gob.mx/")
+
+
+def test_congress_adapter_rejects_partial_constitutional_roster():
+    content = b"<html><body><table><tr><th>Diputado</th><th>Entidad</th><th>Distrito</th></tr><tr><td>Persona Uno</td><td>Jalisco</td><td>Dtto. 1</td></tr></table></body></html>"
+    document = CongressRosterAdapter().discover()[0]
+    result = FetchResult(document, document.url, 200, "text/html", content)
+    try:
+        CongressRosterAdapter().emit_candidates(result)
+    except ValueError as error:
+        assert "expected 500" in str(error)
+    else:
+        raise AssertionError("A partial constitutional roster must be rejected")
+
+
+def test_tdj_official_release_parser_extracts_all_five_magistratures():
+    text = (
+        "La magistrada presidenta Celia Maya García, asumió la presidencia. "
+        "También forman parte del Pleno las magistradas Eva Verónica de Gyvés Zárate "
+        "e Indira Isabel García Pérez, así como los magistrados Bernardo Bátiz Vázquez "
+        "y Rufino H León Tovar."
+    )
+    rows = FederalLeadershipAdapter._tdj_rows_from_text(text)
+    assert len(rows) == 5
+    assert rows[0]["name"] == "Celia Maya García"
+    assert rows[0]["role"] == "Magistrada Presidenta"
+
+
+def test_scjn_official_release_parser_extracts_nine_ministratures():
+    text = (
+        "Las ministras y los ministros de la Nueva Suprema Corte de Justicia de la Nación, "
+        "Hugo Aguilar Ortiz, Lenia Batres Guadarrama, Yasmín Esquivel Mossa, Loretta Ortiz Ahlf, "
+        "María Estela Ríos González, Sara Irene Herrerías Guerra, Giovanni Azael Figueroa Mejía e "
+        "Irving Espinosa Betanzo, recibieron los bastones de mando; el Ministro Presidente recibió "
+        "el bastón en representación del ministro Arístides Rodrigo Guerrero García, quien no participó."
+    )
+    rows = FederalLeadershipAdapter._scjn_rows_from_text(text)
+    assert len(rows) == 9
+    assert rows[0]["name"] == "Hugo Aguilar Ortiz"
+    assert rows[-1]["name"] == "Arístides Rodrigo Guerrero García"
+
+
+def test_leadership_domains_can_run_as_independent_review_batches():
+    assert {document.source_key for document in CabinetLeadershipAdapter().discover()} == {
+        "directorio_gabinete_legal"
+    }
+    assert {document.source_key for document in JudicialLeadershipAdapter().discover()} == {
+        "directorio_scjn_pleno",
+        "directorio_tepjf_sala_superior",
+        "directorio_oaj_pleno",
+        "directorio_tdj_pleno",
+    }
+    assert {document.source_key for document in AutonomousLeadershipAdapter().discover()} == {
+        "directorio_ine_consejo",
+        "directorio_banxico_junta",
+        "directorio_inegi_junta",
+        "directorio_cndh_superior",
+        "directorio_fgr_titular",
+        "directorio_asf_titular",
+    }
+
+
+def test_ine_parser_excludes_legislative_representatives_without_vote():
+    content = b"""
+    <main data-expected-members="2">
+      <h2>INTEGRANTES DEL CONSEJO GENERAL</h2>
+      <h3><a href="/consejera-presidenta/">Lic. Persona Presidenta</a></h3>
+      <h2>CONSEJEROS Y CONSEJERAS ELECTORALES</h2>
+      <h3><a href="/consejero-electoral/">Mtro. Persona Consejera</a></h3>
+      <h2>CONSEJEROS Y CONSEJERAS DEL PODER LEGISLATIVO</h2>
+      <h3><a href="/representante/">Persona Representante</a></h3>
+    </main>
+    """
+    adapter = FederalLeadershipAdapter()
+    document = next(item for item in adapter.discover() if item.source_key == "directorio_ine_consejo")
+    candidates = adapter.emit_candidates(FetchResult(document, document.url, 200, "text/html", content))
+    assert [candidate.subject_label for candidate in candidates] == ["Persona Presidenta", "Persona Consejera"]
+
+
+def test_cndh_parser_preserves_an_unrecorded_superior_position_without_inventing_a_person():
+    content = b"""
+    <main data-expected-members="2">
+      <div class="card"><span class="full-name">Mtra. Persona Presidenta</span><span class="badge-Area fw-bold">Presidenta de la CNDH</span><span class="badge-Area text-dark">Presidencia</span></div>
+      <div class="card"><span class="full-name">Persona Directora</span><span class="badge-Area fw-bold">Directora General de Quejas</span><span class="badge-Area text-dark">Tercera Visitaduria General</span></div>
+    </main>
+    """
+    adapter = FederalLeadershipAdapter()
+    document = next(item for item in adapter.discover() if item.source_key == "directorio_cndh_superior")
+    candidates = adapter.emit_candidates(FetchResult(document, document.url, 200, "text/html", content))
+    unrecorded = next(item for item in candidates if item.metadata["occupancyStatus"] == "unrecorded")
+    assert unrecorded.subject_kind == "position"
+    assert unrecorded.predicate == "PART_OF"
+
+
+def test_banxico_parser_handles_the_official_malformed_table_rows():
+    content = b"""
+    <main data-expected-members="2"><table><tr><th>Nombre</th><th>Puesto</th><th>Direccion</th></tr>
+      <tr><td>Rodriguez Ceja, Victoria</td><td>Gobernador/a</td><td></td></tr>
+      <td>Heath Constable, Jonathan Ernest</td><td>Subgobernador/a</td><td>Mexico</td>
+    </table></main>
+    """
+    adapter = FederalLeadershipAdapter()
+    document = next(item for item in adapter.discover() if item.source_key == "directorio_banxico_junta")
+    candidates = adapter.emit_candidates(FetchResult(document, document.url, 200, "text/html", content))
+    assert [item.subject_label for item in candidates] == ["Victoria Rodriguez Ceja", "Jonathan Ernest Heath Constable"]

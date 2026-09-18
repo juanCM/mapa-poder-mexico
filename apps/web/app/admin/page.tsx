@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { AdminDashboard, type AdminOverview } from "@/components/admin-dashboard";
 import { getAdminUser } from "@/lib/admin";
-import type { ReviewTask } from "@mapa/contracts";
+import type { ReviewBatch, ReviewTask } from "@mapa/contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -37,11 +37,25 @@ async function loadAdminOverview(): Promise<{ overview: AdminOverview; error?: s
   } catch { return { overview: empty, error: "No fue posible conectar con la API local." }; }
 }
 
+async function loadReviewBatches(): Promise<{ batches: ReviewBatch[]; error?: string }> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!apiUrl) return { batches: [], error: "La URL de la API no está configurada." };
+  try {
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/admin/review-batches`, {
+      cache: "no-store", headers: adminHeaders()
+    });
+    if (!response.ok) return { batches: [], error: `La API respondió con ${response.status}.` };
+    return { batches: await response.json() as ReviewBatch[] };
+  } catch {
+    return { batches: [], error: "No fue posible cargar los lotes editoriales." };
+  }
+}
+
 export default async function AdminPage() {
   const user = await getAdminUser();
   if (!user) redirect("/admin/login");
-  const [{ tasks, error: taskError }, { overview, error: overviewError }] = await Promise.all([loadReviewTasks(), loadAdminOverview()]);
-  const error = taskError ?? overviewError;
+  const [{ tasks, error: taskError }, { batches, error: batchError }, { overview, error: overviewError }] = await Promise.all([loadReviewTasks(), loadReviewBatches(), loadAdminOverview()]);
+  const error = taskError ?? batchError ?? overviewError;
   return (
     <div className="container">
       <header className="page-hero">
@@ -51,7 +65,7 @@ export default async function AdminPage() {
       </header>
       {user.preview && <div className="notice"><strong>Acceso local temporal:</strong> el bypass está activo sólo para validar la consola. Los datos mostrados provienen de la API y PostgreSQL.</div>}
       {error && <div className="notice"><strong>Datos no disponibles:</strong> {error}</div>}
-      <AdminDashboard initialTasks={tasks} overview={overview} />
+      <AdminDashboard initialTasks={tasks} initialBatches={batches} overview={overview} />
       <div className="section-sm" />
     </div>
   );
