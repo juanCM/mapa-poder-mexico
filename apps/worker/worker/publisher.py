@@ -37,6 +37,21 @@ def effective_date(candidate: dict, fallback: date) -> date:
     return date.fromisoformat(str(value)[:10])
 
 
+def entity_valid_from(metadata: dict) -> date | None:
+    """Fecha de creación de la entidad, o None si la fuente no la afirma.
+
+    No cae en `validFrom`: esa clave describe el inicio de una relación o de
+    un encargo, no el nacimiento de la entidad que lo ocupa. La fecha de
+    observación describe al sistema, no al mundo, así que tampoco sirve:
+    usarla afirmaría que la entidad nació el día en que se descargó la fuente
+    y la ocultaría de toda consulta `as_of` anterior.
+    """
+    value = metadata.get("entityValidFrom")
+    if not value:
+        return None
+    return date.fromisoformat(str(value)[:10])
+
+
 def person_name_parts(label: str, metadata: dict) -> tuple[str, str]:
     """Obtiene nombres sin depender de una convención de fuente particular."""
     given = metadata.get("givenNames")
@@ -181,7 +196,7 @@ class ApprovedCandidatePublisher:
             label=PARAESTATAL_LABEL,
             category="administrative_group",
             organization_type="administrative_group",
-            observed_on=observed_today(),
+            valid_from=None,
             source_ids=["apf_loapf"],
             counts=counts,
         )
@@ -217,7 +232,7 @@ class ApprovedCandidatePublisher:
                 observed_on,
                 counts,
             )
-            return self._ensure_position(cursor, label, organization_id, metadata, observed_on, counts)
+            return self._ensure_position(cursor, label, organization_id, metadata, counts)
         if label == "Poder Ejecutivo Federal":
             return executive_id
         if label == PARAESTATAL_LABEL:
@@ -231,7 +246,7 @@ class ApprovedCandidatePublisher:
             return existing
         return self._ensure_organization(
             cursor, label, metadata.get("category", "federal_entity"),
-            metadata.get("organizationType", "federal_entity"), observed_on, [], counts,
+            metadata.get("organizationType", "federal_entity"), entity_valid_from(metadata), [], counts,
             branch=metadata.get("branch", "executive"),
         )
 
@@ -251,7 +266,7 @@ class ApprovedCandidatePublisher:
         if kind == "person":
             return self._ensure_person(
                 cursor, candidate["subject_label"], candidate["candidate_id"], metadata,
-                source_document_id, observed_on, counts,
+                source_document_id, counts,
             )
         if kind == "position":
             organization_label = metadata.get("organizationLabel")
@@ -262,14 +277,14 @@ class ApprovedCandidatePublisher:
                 executive_id, paraestatal_id, observed_on, counts,
             )
             return self._ensure_position(
-                cursor, candidate["subject_label"], organization_id, metadata, observed_on, counts
+                cursor, candidate["subject_label"], organization_id, metadata, counts
             )
         return self._ensure_organization(
             cursor,
             candidate["subject_label"],
             metadata.get("organizationType", "federal_entity"),
             metadata.get("organizationType", "federal_entity"),
-            observed_on,
+            entity_valid_from(metadata),
             ["apf_loapf" if metadata.get("apfSector") == "centralizada" else "apf_paraestatales"],
             counts,
             branch=metadata.get("branch", "executive"),
@@ -277,7 +292,7 @@ class ApprovedCandidatePublisher:
 
     def _ensure_organization(
         self, cursor: psycopg.Cursor, label: str, category: str, organization_type: str,
-        observed_on: date, source_ids: list[str], counts: dict, branch: str = "executive",
+        valid_from: date | None, source_ids: list[str], counts: dict, branch: str = "executive",
     ) -> str:
         canonical_slug = slugify(label)
         if label == "Oficina de la Presidencia de la República":
@@ -287,7 +302,7 @@ class ApprovedCandidatePublisher:
         cursor.execute(
             """
             INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
-            VALUES (%s, %s, 'organization', %s, %s, %s, %s, %s, daterange(%s, NULL, '[)'), %s::jsonb)
+            VALUES (%s, %s, 'organization', %s, %s, %s, %s, %s, daterange(%s::date, NULL, '[)'), %s::jsonb)
             ON CONFLICT (slug) DO UPDATE SET
               canonical_name = EXCLUDED.canonical_name,
               short_name = EXCLUDED.short_name,
@@ -297,7 +312,7 @@ class ApprovedCandidatePublisher:
             RETURNING id::text, (xmax = 0) AS inserted
             """,
             (node_id, canonical_slug, label, label, f"Institución federal: {label}.",
-             category, branch, observed_on, json.dumps({"jurisdiction": "Federal", "sourceIds": source_ids})),
+             category, branch, valid_from, json.dumps({"jurisdiction": "Federal", "sourceIds": source_ids})),
         )
         stored_id, inserted = cursor.fetchone()
         counts["nodes"] += int(inserted)
@@ -315,7 +330,7 @@ class ApprovedCandidatePublisher:
 
     def _ensure_person(
         self, cursor: psycopg.Cursor, label: str, candidate_id: str, metadata: dict,
-        source_document_id: str, observed_on: date, counts: dict,
+        source_document_id: str, counts: dict,
     ) -> str:
         identity = metadata.get("officialIdentifier") or metadata.get("officialProfileUrl") or candidate_id
         node_id = stable_id(f"node/person/{identity}")
@@ -332,10 +347,14 @@ class ApprovedCandidatePublisher:
             person_slug = f"{base_slug}-{sha256(str(identity).encode()).hexdigest()[:8]}"
         else:
             person_slug = base_slug
+        # La vigencia de una persona es su existencia, no su encargo: `validFrom`
+        # describe la toma de posesión y pertenece a la tenencia, no al nodo.
+        born_on = metadata.get("birthDate")
+        born_on = date.fromisoformat(str(born_on)[:10]) if born_on else None
         cursor.execute(
             """
             INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
-            VALUES (%s, %s, 'person', %s, %s, '', 'public_official', %s, daterange(%s, NULL, '[)'), %s::jsonb)
+            VALUES (%s, %s, 'person', %s, %s, '', 'public_official', %s, daterange(%s::date, NULL, '[)'), %s::jsonb)
             ON CONFLICT (id) DO UPDATE SET
               canonical_name = EXCLUDED.canonical_name,
               short_name = EXCLUDED.short_name,
@@ -343,7 +362,7 @@ class ApprovedCandidatePublisher:
             RETURNING id::text, (xmax = 0) AS inserted
             """,
             (
-                node_id, person_slug, label, label, metadata.get("branch", "executive"), observed_on,
+                node_id, person_slug, label, label, metadata.get("branch", "executive"), born_on,
                 json.dumps({"jurisdiction": "Federal", "identityKey": identity}),
             ),
         )
@@ -357,7 +376,7 @@ class ApprovedCandidatePublisher:
               node_id, given_names, family_names, official_profile_url,
               official_portrait_url, portrait_source_document_id
             )
-            VALUES (%s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE %s::uuid END)
+            VALUES (%s, %s, %s, %s, %s, CASE WHEN %s::text IS NULL THEN NULL ELSE %s::uuid END)
             ON CONFLICT (node_id) DO UPDATE SET
               given_names = EXCLUDED.given_names,
               family_names = EXCLUDED.family_names,
@@ -380,7 +399,7 @@ class ApprovedCandidatePublisher:
 
     def _ensure_position(
         self, cursor: psycopg.Cursor, label: str, organization_id: str,
-        metadata: dict, observed_on: date, counts: dict,
+        metadata: dict, counts: dict,
     ) -> str:
         seat_key = metadata.get("seatKey") or slugify(label)
         node_id = stable_id(f"node/position/{organization_id}/{seat_key}")
@@ -388,7 +407,7 @@ class ApprovedCandidatePublisher:
         cursor.execute(
             """
             INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
-            VALUES (%s, %s, 'position', %s, %s, '', %s, %s, daterange(%s, NULL, '[)'), %s::jsonb)
+            VALUES (%s, %s, 'position', %s, %s, '', %s, %s, daterange(%s::date, NULL, '[)'), %s::jsonb)
             ON CONFLICT (id) DO UPDATE SET
               canonical_name = EXCLUDED.canonical_name,
               short_name = EXCLUDED.short_name,
@@ -397,7 +416,7 @@ class ApprovedCandidatePublisher:
             """,
             (
                 node_id, slug, label, label, metadata.get("positionCategory", "public_office"),
-                metadata.get("branch", "executive"), observed_on,
+                metadata.get("branch", "executive"), entity_valid_from(metadata),
                 json.dumps({"jurisdiction": "Federal", "occupancyStatus": metadata.get("occupancyStatus", "unrecorded")}),
             ),
         )
@@ -491,7 +510,7 @@ class ApprovedCandidatePublisher:
             INSERT INTO tenures (
               id, person_id, position_id, status, selection_method, valid_during
             )
-            VALUES (%s, %s, %s, %s, %s, daterange(%s, NULL, '[)'))
+            VALUES (%s, %s, %s, %s, %s, daterange(%s::date, NULL, '[)'))
             ON CONFLICT (id) DO NOTHING
             RETURNING id
             """,
@@ -607,7 +626,7 @@ class ApprovedCandidatePublisher:
         cursor.execute(
             """
             INSERT INTO relationships (id, slug, relationship_type, relationship_class, source_node_id, target_node_id, label, description, valid_during, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, daterange(%s, NULL, '[)'), %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, daterange(%s::date, NULL, '[)'), %s::jsonb)
             ON CONFLICT (id) DO NOTHING RETURNING id
             """,
             (relationship_id, relationship_slug, candidate.get("predicate", "PART_OF"),
@@ -624,7 +643,7 @@ class ApprovedCandidatePublisher:
         cursor.execute(
             """
             INSERT INTO assertions (id, assertion_type, subject_node_id, predicate, object_node_id, relationship_id, valid_during, observed_at, extraction_method, confidence, status, reviewed_by, reviewed_at, published_at)
-            VALUES (%s, 'relationship', %s, %s, %s, %s, daterange(%s, NULL, '[)'), now(), 'approved_candidate', 1, 'published', 'editorial-batch', now(), now())
+            VALUES (%s, 'relationship', %s, %s, %s, %s, daterange(%s::date, NULL, '[)'), now(), 'approved_candidate', 1, 'published', 'editorial-batch', now(), now())
             ON CONFLICT (id) DO NOTHING RETURNING id
             """,
             (assertion_id, subject_id, candidate.get("predicate", "PART_OF"), target_id, relationship_id, starts_on),

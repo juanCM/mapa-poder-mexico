@@ -14,7 +14,7 @@ from worker.models import CandidateAssertion, DiscoveredDocument, FetchResult
 
 LEADERSHIP_SOURCES = {
     "directorio_gabinete_legal": ("https://www.gob.mx/gobierno", "Presidencia de la República", "executive", "central_administration", 24),
-    "directorio_scjn_pleno": ("https://www.internet2.scjn.gob.mx/red2/comunicados/comunicado.asp?id=8343", "Suprema Corte de Justicia de la Nación", "judicial", "court", 9),
+    "directorio_scjn_pleno": ("https://www.scjn.gob.mx/conoce-la-corte", "Suprema Corte de Justicia de la Nación", "judicial", "court", 9),
     "directorio_tepjf_sala_superior": ("https://www.te.gob.mx/front3/ContenidoSalas/salaSuperior", "Sala Superior del Tribunal Electoral del Poder Judicial de la Federación", "judicial", "court", 5),
     "directorio_oaj_pleno": ("https://www.oaj.gob.mx/pleno.htm", "Órgano de Administración Judicial", "judicial", "judicial_administration", 5),
     "directorio_tdj_pleno": ("https://www.tdj.gob.mx/assets/resources/pdf/com_01.pdf", "Tribunal de Disciplina Judicial", "judicial", "court", 5),
@@ -54,13 +54,27 @@ def canonical_role(value: str) -> str:
     return compact(value)
 
 
+HONORIFICS = (
+    r"Lic\.?", r"Lcda\.?", r"Licenciad[oa]", r"Mtr[oa]\.?", r"Maestr[oa]",
+    r"Dr\.?", r"Dra\.?", r"Doctor(?:a)?", r"Ministr[oa]", r"Magistrad[oa]",
+    r"Consejer[oa]", r"C\.",
+)
+
+
 def strip_honorific(value: str) -> str:
-    return re.sub(
-        r"^(?:Lic\.?|Mtr[oa]\.?|Dr(?:a)?\.?|C\.?|Lcda\.?)\s+",
-        "",
-        compact(value),
-        flags=re.IGNORECASE,
-    )
+    """Quita tratamientos y puntuación de arrastre del nombre de una persona.
+
+    Los directorios oficiales anteponen el tratamiento o el cargo al nombre.
+    Conservarlos produciría personas distintas para la misma persona según la
+    fuente que la publique.
+    """
+    text = compact(value)
+    pattern = r"^(?:{})\s+".format("|".join(HONORIFICS))
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    return text.strip(" .,;:")
 
 
 class FederalLeadershipAdapter(SourceAdapter):
@@ -97,7 +111,7 @@ class FederalLeadershipAdapter(SourceAdapter):
             if rows:
                 pass
             elif source_key == "directorio_scjn_pleno":
-                rows = self._scjn_rows_from_text(soup.get_text(" ", strip=True))
+                rows = self._scjn_rows(soup)
             elif source_key == "directorio_ine_consejo":
                 rows = self._ine_rows(soup)
             elif source_key == "directorio_banxico_junta":
@@ -430,34 +444,43 @@ class FederalLeadershipAdapter(SourceAdapter):
         ]
 
     @staticmethod
-    def _scjn_rows_from_text(text: str) -> list[dict]:
-        normalized_text = compact(text)
-        roster = re.search(
-            r"Nueva Suprema Corte de Justicia de la Nación,\s*(.+?)\s*,?\s*recibieron los bastones",
-            normalized_text,
-            flags=re.IGNORECASE,
-        )
-        represented = re.search(
-            r"representación del ministro\s+([^,.;]+)", normalized_text, flags=re.IGNORECASE
-        )
-        if not roster:
-            return []
-        names = [compact(value) for value in re.split(r",\s*|\s+e\s+", roster.group(1)) if compact(value)]
-        if represented:
-            names.append(compact(represented.group(1)))
-        return [
-            {
+    def _scjn_rows(soup: BeautifulSoup) -> list[dict]:
+        """Lee el directorio del Pleno, no un comunicado.
+
+        Cada ministratura se publica como una ficha propia bajo ``/ministro-``
+        o ``/ministra-``. La presidencia se reconoce por el texto de su ficha,
+        no por el orden de aparición, que el sitio puede reordenar.
+        """
+        rows: list[dict] = []
+        seen: set[str] = set()
+        for link in soup.select('a[href^="/ministro-"], a[href^="/ministra-"]'):
+            href = link.get("href", "")
+            if href in seen:
+                continue
+            seen.add(href)
+            # La ficha antepone el cargo y el tratamiento dentro del propio
+            # enlace; el último `span` aísla el nombre. Si el sitio cambia esa
+            # estructura, el texto completo sigue sirviendo tras limpiarlo.
+            spans = link.select("span")
+            raw = spans[-1].get_text(" ", strip=True) if spans else link.get_text(" ", strip=True)
+            name = strip_honorific(raw)
+            if not name:
+                continue
+            container = link.find_parent(["div", "li", "article", "section"])
+            context = normalized(link.get_text(" ", strip=True))
+            presides = "presidente de la suprema corte" in context or "presidenta de la suprema corte" in context
+            rows.append({
                 "name": name,
-                "role": "Ministro Presidente" if index == 0 else "Ministratura del Pleno",
-                "profile": None,
+                "role": "Ministro Presidente" if presides else "Ministratura del Pleno",
+                "profile": href,
                 "portrait": None,
                 "status": "confirmed",
                 "valid_from": "2025-09-01",
                 "organization": None,
-                "excerpt": name,
-            }
-            for index, name in enumerate(names)
-        ]
+                "excerpt": compact(container.get_text(" ", strip=True)) if container else name,
+            })
+        rows.sort(key=lambda row: row["role"] != "Ministro Presidente")
+        return rows
 
     @staticmethod
     def _candidate(
@@ -468,10 +491,13 @@ class FederalLeadershipAdapter(SourceAdapter):
         portrait = urljoin(result.final_url, row.get("portrait")) if row.get("portrait") else None
         if portrait and not FederalLeadershipAdapter._official_url(portrait, result.final_url):
             portrait = None
+        # Punto único por el que pasan todas las fuentes: normalizar aquí evita
+        # que cada directorio imponga su propia convención de tratamientos.
+        name = strip_honorific(row["name"])
         role = row["role"]
         member_organization = row.get("organization") or organization
         seat_key = f"{key(member_organization)}-{key(role)}-{seat_number:02d}"
-        identity = profile if profile != result.final_url else f"{result.document.source_key}:{normalized(row['name'])}"
+        identity = profile if profile != result.final_url else f"{result.document.source_key}:{normalized(name)}"
         position_only = bool(row.get("position_only"))
         metadata = {
             "sourceDocumentSlug": result.document.source_key,
@@ -499,12 +525,12 @@ class FederalLeadershipAdapter(SourceAdapter):
         return CandidateAssertion(
             candidate_id=sha256(candidate_key.encode()).hexdigest()[:24],
             source_key=result.document.source_key,
-            subject_label=role if position_only else row["name"],
+            subject_label=role if position_only else name,
             predicate="PART_OF" if position_only else "HOLDS",
             object_label=member_organization if position_only else role,
             literal_value=None,
             source_locator=f"Integrante {seat_number}",
-            source_excerpt=row.get("excerpt") or f"{row['name']} · {role}",
+            source_excerpt=row.get("excerpt") or f"{name} · {role}",
             confidence=0.98,
             extraction_method="deterministic_official_roster",
             subject_kind="position" if position_only else "person",

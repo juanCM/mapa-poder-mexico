@@ -61,6 +61,32 @@ def test_apf_catalog_extracts_only_current_entities_from_dof_content():
     assert "Entidad en liquidacion" not in labels
 
 
+def test_apf_catalog_attributes_sector_coordinator_without_leaking_it():
+    content = """
+    <div class="Texto">A. ENTIDADES PARAESTATALES DE LA ADMINISTRACIÓN PÚBLICA FEDERAL</div>
+    <div class="Texto">ORGANISMOS DESCENTRALIZADOS SECTORIZADOS</div>
+    <div class="Texto">SECRETARÍA DE GOBERNACIÓN</div>
+    <div class="ROMANOS">1. Talleres Gráficos de México</div>
+    <div class="Texto">SUBTOTAL: 1</div>
+    <div class="Texto">ORGANISMOS DESCENTRALIZADOS NO SECTORIZADOS</div>
+    <div class="ROMANOS">2. Instituto Mexicano del Seguro Social</div>
+    """.encode()
+    adapter = ApfCatalogAdapter()
+    document = adapter.discover()[1]
+    candidates = adapter.emit_candidates(FetchResult(document, document.url, 200, "text/html", content))
+
+    oversight = [candidate for candidate in candidates if candidate.predicate == "OVERSEES"]
+    # El encabezado del DOF viene en mayúsculas; publicarlo tal cual
+    # sobrescribiría el nombre canónico de la dependencia en el grafo.
+    assert [(c.subject_label, c.object_label) for c in oversight] == [
+        ("Secretaría de Gobernación", "Talleres Gráficos de México")
+    ]
+    # Un organismo no sectorizado no puede heredar la coordinadora del bloque
+    # anterior: el encabezado intermedio tiene que limpiar el sector.
+    imss = next(c for c in candidates if c.subject_label == "Instituto Mexicano del Seguro Social")
+    assert "sectorLabel" not in imss.metadata
+
+
 def test_publication_helpers_are_stable_and_preserve_hispanic_names():
     assert slugify("Secretaría de las Mujeres") == "secretaria-de-las-mujeres"
     assert person_name_parts("Ana María López García", {}) == ("Ana María", "López García")
@@ -153,18 +179,25 @@ def test_tdj_official_release_parser_extracts_all_five_magistratures():
     assert rows[0]["role"] == "Magistrada Presidenta"
 
 
-def test_scjn_official_release_parser_extracts_nine_ministratures():
-    text = (
-        "Las ministras y los ministros de la Nueva Suprema Corte de Justicia de la Nación, "
-        "Hugo Aguilar Ortiz, Lenia Batres Guadarrama, Yasmín Esquivel Mossa, Loretta Ortiz Ahlf, "
-        "María Estela Ríos González, Sara Irene Herrerías Guerra, Giovanni Azael Figueroa Mejía e "
-        "Irving Espinosa Betanzo, recibieron los bastones de mando; el Ministro Presidente recibió "
-        "el bastón en representación del ministro Arístides Rodrigo Guerrero García, quien no participó."
-    )
-    rows = FederalLeadershipAdapter._scjn_rows_from_text(text)
-    assert len(rows) == 9
-    assert rows[0]["name"] == "Hugo Aguilar Ortiz"
-    assert rows[-1]["name"] == "Arístides Rodrigo Guerrero García"
+def test_scjn_directory_parser_reads_the_plenary_roster():
+    from bs4 import BeautifulSoup
+
+    html = """
+    <div><a href="/ministra-lenia-batres-guadarrama">
+         <span>Ministra</span><span>Lenia Batres Guadarrama</span></a></div>
+    <div><a href="/ministro-hugo-aguilar-ortiz">
+         <span>Presidente de la Suprema Corte de Justicia de la Nación</span>
+         <span>Ministro</span><span>Hugo Aguilar Ortiz</span></a>
+         <a href="/ministro-hugo-aguilar-ortiz"><span>Ministro</span><span>Hugo Aguilar Ortiz</span></a></div>
+    """
+    rows = FederalLeadershipAdapter._scjn_rows(BeautifulSoup(html, "html.parser"))
+
+    # El cargo y el tratamiento viven dentro del propio enlace: el nombre no
+    # debe arrastrarlos. La ficha repetida no cuenta dos veces y la presidencia
+    # se reconoce por su texto, aunque el sitio la liste en segundo lugar.
+    assert [row["name"] for row in rows] == ["Hugo Aguilar Ortiz", "Lenia Batres Guadarrama"]
+    assert rows[0]["role"] == "Ministro Presidente"
+    assert rows[1]["role"] == "Ministratura del Pleno"
 
 
 def test_leadership_domains_can_run_as_independent_review_batches():

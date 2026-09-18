@@ -34,7 +34,7 @@ class Node(ApiModel):
     category: str
     branch: str
     jurisdiction: str
-    valid_from: str
+    valid_from: Optional[str] = None
     valid_to: Optional[str] = None
     current_role: Optional[str] = None
     organization_slug: Optional[str] = None
@@ -51,7 +51,7 @@ class Edge(ApiModel):
     description: str
     condition: Optional[str] = None
     legal_basis: str
-    valid_from: str
+    valid_from: Optional[str] = None
     valid_to: Optional[str] = None
     evidence: list[Evidence]
 
@@ -123,7 +123,7 @@ class PowerMapRelationship(ApiModel):
     description: str
     condition: Optional[str] = None
     legal_basis: str
-    valid_from: str
+    valid_from: Optional[str] = None
     valid_to: Optional[str] = None
     has_evidence: bool
     source_label: Optional[str] = None

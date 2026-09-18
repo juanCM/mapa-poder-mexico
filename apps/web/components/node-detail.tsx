@@ -3,6 +3,7 @@ import { ArrowRight, BookOpen, CalendarRange, ExternalLink } from "lucide-react"
 import type { GraphNode } from "@mapa/contracts";
 import {
   formatDate,
+  formatStartDate,
   getNodeById,
   relationshipsForNode,
   sourcesForNode
@@ -24,7 +25,7 @@ export function NodeDetail({ node }: { node: GraphNode }) {
           <div className="fact-list">
             <div className="fact"><small>Ámbito</small><strong>{node.jurisdiction}</strong></div>
             <div className="fact"><small>Poder o categoría</small><strong>{branchLabel(node.branch)}</strong></div>
-            <div className="fact"><small>Vigente desde</small><strong>{formatDate(node.validFrom)}</strong></div>
+            <div className="fact"><small>Vigente desde</small><strong>{formatStartDate(node.validFrom)}</strong></div>
             <div className="fact"><small>Estado</small><strong>{node.validTo ? `Terminó ${formatDate(node.validTo)}` : "Vigente"}</strong></div>
           </div>
 
@@ -52,7 +53,7 @@ export function NodeDetail({ node }: { node: GraphNode }) {
                 {relations.filter((relation) => relation.type === "HOLDS").map((relation) => (
                   <div className="timeline-item" key={relation.id}>
                     <span className="timeline-dot"><CalendarRange size={17} /></span>
-                    <div className="timeline-content"><time>{formatDate(relation.validFrom)}</time><h3>{getNodeById(relation.target)?.label}</h3><p>{relation.description}</p></div>
+                    <div className="timeline-content"><time>{formatStartDate(relation.validFrom)}</time><h3>{getNodeById(relation.target)?.label}</h3><p>{relation.description}</p></div>
                   </div>
                 ))}
               </div>

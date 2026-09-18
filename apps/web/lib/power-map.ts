@@ -9,9 +9,11 @@ import type {
 } from "@mapa/contracts";
 import { dataset } from "@/lib/data";
 
-function isActive(record: { validFrom: string; validTo: string | null }, asOf: string) {
+function isActive(record: { validFrom: string | null; validTo: string | null }, asOf: string) {
   // El contrato temporal usa rangos [inicio, fin), igual que PostgreSQL.
-  return record.validFrom <= asOf && (!record.validTo || record.validTo > asOf);
+  // Un inicio ausente no acota por abajo: la fuente no declara desde cuándo
+  // existe, así que excluirlo del pasado sería afirmar que no existía.
+  return (!record.validFrom || record.validFrom <= asOf) && (!record.validTo || record.validTo > asOf);
 }
 
 function relationship(edge: GraphEdge, labels: Map<string, string>): PowerMapRelationship {
