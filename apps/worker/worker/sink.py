@@ -19,6 +19,7 @@ class PostgresReviewSink:
             return str(cursor.fetchone()[0])
 
     def emit(self, run_id: str, candidates: Iterable[CandidateAssertion]) -> int:
+        candidates = list(candidates)
         count = 0
         with psycopg.connect(self.database_url) as connection, connection.cursor() as cursor:
             for candidate in candidates:
@@ -42,9 +43,16 @@ class PostgresReviewSink:
                 count += cursor.rowcount
             cursor.execute(
                 "UPDATE ingestion_runs SET candidate_count = %s, status = 'succeeded', finished_at = now() WHERE id = %s",
-                (count, run_id),
+                (len(candidates), run_id),
             )
         return count
+
+    def record_discovered_count(self, run_id: str, count: int) -> None:
+        with psycopg.connect(self.database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE ingestion_runs SET discovered_count = %s WHERE id = %s",
+                (count, run_id),
+            )
 
     def record_snapshot(
         self,
