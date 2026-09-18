@@ -11,6 +11,12 @@ worker, de modo que `storage_path` declara esa condición en vez de apuntar a
 un archivo inexistente. El hash permite reverificar la afirmación volviendo a
 descargar la página, que es la garantía que importa.
 
+Tres titularidades no tienen ficha oficial localizable y se publican como
+atestiguación editorial (`ATTESTED`): la evidencia declara que su respaldo es
+la palabra de una persona editora fechada, con `trust_tier` inferior, para que
+una auditoría las distinga de las respaldadas por la fuente de gobierno. Es
+preferible a inventarles una URL de gob.mx que las haría indistinguibles.
+
 Idempotente: los identificadores son deterministas y toda escritura usa
 ON CONFLICT, así que reejecutarlo no duplica registros.
 """
@@ -20,7 +26,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
@@ -29,6 +35,7 @@ import psycopg
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps" / "worker"))
 from worker.publisher import slugify, stable_id
 
+OBSERVED_ON = date(2026, 9, 18)
 REVIEWER = "carga-editorial-gabinete"
 
 # (slug de la dependencia, persona, cargo, fecha de inicio, confianza, url, sha256, bytes, título de la fuente)
@@ -144,6 +151,27 @@ CABINET = [
      "Directorio de la Secretaría de las Mujeres"),
 ]
 
+# Titularidades que el editor da por ciertas pero de las que no se localizó una
+# página oficial vigente que las nombre. Se publican con evidencia que declara
+# exactamente eso —una atestiguación editorial firmada y fechada, no un
+# documento de gobierno— y con `trust_tier` inferior, de modo que una auditoría
+# las distinga de las 21 respaldadas por la fuente oficial. Inventar una URL o
+# un hash de gob.mx para que parecieran equivalentes sí corrompería el modelo.
+#
+# (slug de la dependencia, persona, cargo, tipo de cargo, fecha de inicio, confianza)
+ATTESTED = [
+    ("agencia-de-transformacion-digital-y-telecomunicaciones", "José Antonio Peña Merino",
+     "Titular de la Agencia de Transformación Digital y Telecomunicaciones", "agency_head",
+     "2025-01-01", 0.80),
+    ("consejeria-juridica-del-ejecutivo-federal", "Luisa María Alcalde Luján",
+     "Consejera Jurídica del Ejecutivo Federal", "legal_counsel", "2026-05-04", 0.85),
+    ("presidencia-de-la-republica", "Lázaro Cárdenas Batel",
+     "Jefe de la Oficina de la Presidencia de la República", "chief_of_staff", "2024-10-01", 0.85),
+]
+
+ATTESTATION_URN = "urn:mapapoder:atestiguacion-editorial:2026-09-18"
+ATTESTED_BY = "juan.carvajal@corexcorp.com"
+
 # Las juntas y consejos se cargaron sin arista hacia su órgano, así que el mapa
 # no podía llegar de "Banco de México" a su gobernadora. La evidencia es el
 # mismo directorio oficial ya descargado por el worker.
@@ -220,103 +248,182 @@ def load_cabinet(cursor: psycopg.Cursor) -> dict:
             (fragment_id, snapshot_id, excerpt, sha256(excerpt.encode()).hexdigest()),
         )
 
-        person_slug = slugify(person)
-        person_node = stable_id(f"node/person/{url}")
-        cursor.execute(
-            """
-            INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
-            VALUES (%s, %s, 'person', %s, %s, '', 'public_official', 'executive', daterange(NULL, NULL, '[)'), %s::jsonb)
-            ON CONFLICT (slug) DO UPDATE SET canonical_name = EXCLUDED.canonical_name
-            RETURNING id::text, (xmax = 0)
-            """,
-            (person_node, person_slug, person, person,
-             f'{{"jurisdiction": "Federal", "identityKey": "{url}"}}'),
+        publish_titular(
+            cursor, org_slug, organization_id, person, role, "secretariat_head",
+            valid_from, confidence, url, fragment_id, "curated_manual_review",
+            "Ficha o comunicado oficial de la dependencia.", url, counts,
         )
-        person_node, inserted = cursor.fetchone()
-        counts["personas"] += int(inserted)
-        given, family = name_parts(person)
-        cursor.execute(
-            """
-            INSERT INTO persons (node_id, given_names, family_names, official_profile_url)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (node_id) DO UPDATE SET official_profile_url = EXCLUDED.official_profile_url
-            """,
-            (person_node, given, family, url),
-        )
+    return counts
 
-        position_slug = f"titular-{org_slug}"
-        position_node = stable_id(f"node/position/{position_slug}")
-        cursor.execute(
-            """
-            INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
-            VALUES (%s, %s, 'position', %s, %s, '', 'public_office', 'executive', daterange(NULL, NULL, '[)'), %s::jsonb)
-            ON CONFLICT (slug) DO UPDATE SET canonical_name = EXCLUDED.canonical_name
-            RETURNING id::text, (xmax = 0)
-            """,
-            (position_node, position_slug, role, role, '{"jurisdiction": "Federal", "occupancyStatus": "confirmed"}'),
-        )
-        position_node, inserted = cursor.fetchone()
-        counts["cargos"] += int(inserted)
-        cursor.execute(
-            """
-            INSERT INTO positions (node_id, organization_id, position_type, selection_method, is_elected, is_collegial, metadata)
-            VALUES (%s, %s, 'secretariat_head', 'presidential_appointment', false, false, '{}'::jsonb)
-            ON CONFLICT (node_id) DO UPDATE SET organization_id = EXCLUDED.organization_id
-            """,
-            (position_node, organization_id),
-        )
 
-        relationship_id = stable_id(f"relationship/holds/{position_slug}/{person_slug}")
-        cursor.execute(
-            """
-            INSERT INTO relationships (id, slug, relationship_type, relationship_class, source_node_id,
-              target_node_id, label, description, valid_during, metadata)
-            VALUES (%s, %s, 'HOLDS', 'tenure', %s, %s, %s, %s, daterange(%s::date, NULL, '[)'), '{}'::jsonb)
-            ON CONFLICT (slug) DO NOTHING
-            RETURNING id::text
-            """,
-            (relationship_id, f"rel-holds-{position_slug}", person_node, position_node,
-             f"{person} ocupa {role}", f"{person} es titular de la dependencia.", valid_from),
-        )
-        if cursor.fetchone():
-            counts["relaciones"] += 1
+def publish_titular(
+    cursor: psycopg.Cursor, org_slug: str, organization_id: str, person: str, role: str,
+    position_type: str, valid_from: str, confidence: float, identity: str, fragment_id: str,
+    extraction_method: str, evidence_note: str, profile_url: str | None, counts: dict,
+) -> None:
+    """Materializa persona, cargo, relación, afirmación, evidencia y tenencia."""
+    person_slug = slugify(person)
+    person_node = stable_id(f"node/person/{identity}")
+    cursor.execute(
+        """
+        INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
+        VALUES (%s, %s, 'person', %s, %s, '', 'public_official', 'executive', daterange(NULL, NULL, '[)'), %s::jsonb)
+        ON CONFLICT (slug) DO UPDATE SET canonical_name = EXCLUDED.canonical_name
+        RETURNING id::text, (xmax = 0)
+        """,
+        (person_node, person_slug, person, person,
+         json.dumps({"jurisdiction": "Federal", "identityKey": identity})),
+    )
+    person_node, inserted = cursor.fetchone()
+    counts["personas"] += int(inserted)
+    given, family = name_parts(person)
+    cursor.execute(
+        """
+        INSERT INTO persons (node_id, given_names, family_names, official_profile_url)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (node_id) DO UPDATE SET official_profile_url = COALESCE(EXCLUDED.official_profile_url, persons.official_profile_url)
+        """,
+        (person_node, given, family, profile_url),
+    )
 
-        assertion_id = stable_id(f"assertion/holds/{position_slug}/{person_slug}")
+    position_slug = f"titular-{org_slug}"
+    position_node = stable_id(f"node/position/{position_slug}")
+    cursor.execute(
+        """
+        INSERT INTO nodes (id, slug, kind, canonical_name, short_name, description, category, branch, valid_during, metadata)
+        VALUES (%s, %s, 'position', %s, %s, '', 'public_office', 'executive', daterange(NULL, NULL, '[)'), %s::jsonb)
+        ON CONFLICT (slug) DO UPDATE SET canonical_name = EXCLUDED.canonical_name
+        RETURNING id::text, (xmax = 0)
+        """,
+        (position_node, position_slug, role, role, '{"jurisdiction": "Federal", "occupancyStatus": "confirmed"}'),
+    )
+    position_node, inserted = cursor.fetchone()
+    counts["cargos"] += int(inserted)
+    cursor.execute(
+        """
+        INSERT INTO positions (node_id, organization_id, position_type, selection_method, is_elected, is_collegial, metadata)
+        VALUES (%s, %s, %s, 'presidential_appointment', false, false, '{}'::jsonb)
+        ON CONFLICT (node_id) DO UPDATE SET organization_id = EXCLUDED.organization_id
+        """,
+        (position_node, organization_id, position_type),
+    )
+
+    relationship_id = stable_id(f"relationship/holds/{position_slug}/{person_slug}")
+    cursor.execute(
+        """
+        INSERT INTO relationships (id, slug, relationship_type, relationship_class, source_node_id,
+          target_node_id, label, description, valid_during, metadata)
+        VALUES (%s, %s, 'HOLDS', 'tenure', %s, %s, %s, %s, daterange(%s::date, NULL, '[)'), '{}'::jsonb)
+        ON CONFLICT (slug) DO NOTHING
+        RETURNING id::text
+        """,
+        (relationship_id, f"rel-holds-{position_slug}", person_node, position_node,
+         f"{person} ocupa {role}", f"{person} es titular de la dependencia.", valid_from),
+    )
+    if cursor.fetchone():
+        counts["relaciones"] += 1
+
+    assertion_id = stable_id(f"assertion/holds/{position_slug}/{person_slug}")
+    cursor.execute(
+        """
+        INSERT INTO assertions (id, assertion_type, subject_node_id, predicate, object_node_id,
+          relationship_id, valid_during, observed_at, extraction_method, confidence, status,
+          reviewed_by, reviewed_at, published_at)
+        VALUES (%s, 'relationship', %s, 'HOLDS', %s, %s, daterange(%s::date, NULL, '[)'), now(),
+                %s, %s, 'published', %s, now(), now())
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id::text
+        """,
+        (assertion_id, person_node, position_node, relationship_id, valid_from,
+         extraction_method, confidence, REVIEWER),
+    )
+    if cursor.fetchone():
+        counts["afirmaciones"] += 1
+    cursor.execute(
+        """
+        INSERT INTO evidence_links (assertion_id, source_fragment_id, supports, note)
+        VALUES (%s, %s, true, %s)
+        ON CONFLICT (assertion_id, source_fragment_id) DO NOTHING
+        """,
+        (assertion_id, fragment_id, evidence_note),
+    )
+
+    tenure_id = stable_id(f"tenure/{position_slug}/{person_slug}")
+    cursor.execute(
+        """
+        INSERT INTO tenures (id, person_id, position_id, status, selection_method, valid_during)
+        VALUES (%s, %s, %s, 'confirmed', 'presidential_appointment', daterange(%s::date, NULL, '[)'))
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id::text
+        """,
+        (tenure_id, person_node, position_node, valid_from),
+    )
+    if cursor.fetchone():
+        counts["tenencias"] += 1
+
+
+def load_attested(cursor: psycopg.Cursor) -> dict:
+    """Publica titularidades que el editor sostiene sin ficha oficial localizada.
+
+    La evidencia es la atestiguación misma: su texto es el contenido del
+    snapshot y su hash es el de ese texto, así que la cadena documento →
+    snapshot → fragmento es interna y verificable, sin simular un documento de
+    gobierno que no se pudo recuperar.
+    """
+    counts = {"personas": 0, "cargos": 0, "tenencias": 0, "relaciones": 0, "afirmaciones": 0, "sin_dependencia": []}
+    statement = (
+        "Atestiguación editorial de titularidades del Ejecutivo Federal cuya ficha oficial "
+        f"no fue localizada al {OBSERVED_ON.isoformat()}. Declarada por {ATTESTED_BY}. "
+        "Pendiente de sustituirse por evidencia documental oficial."
+    )
+    document_id = stable_id("source-document/atestiguacion_editorial_gabinete")
+    cursor.execute(
+        """
+        INSERT INTO source_documents (id, slug, publisher, title, canonical_url, source_type, trust_tier, enabled)
+        VALUES (%s, 'atestiguacion_editorial_gabinete', %s,
+                'Atestiguación editorial de titularidades sin ficha oficial localizada',
+                %s, 'editorial_attestation', 'C', true)
+        ON CONFLICT (slug) DO UPDATE SET title = EXCLUDED.title
+        RETURNING id::text
+        """,
+        (document_id, ATTESTED_BY, ATTESTATION_URN),
+    )
+    document_id = cursor.fetchone()[0]
+
+    digest = sha256(statement.encode()).hexdigest()
+    snapshot_id = stable_id(f"snapshot/atestiguacion_editorial/{digest}")
+    cursor.execute(
+        """
+        INSERT INTO source_snapshots (id, source_document_id, retrieved_at, final_url, content_hash,
+          mime_type, byte_size, storage_path, http_status, diff_summary)
+        VALUES (%s, %s, now(), %s, %s, 'text/plain', %s, %s, 200, %s::jsonb)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (snapshot_id, document_id, ATTESTATION_URN, digest, len(statement.encode()), ATTESTATION_URN,
+         json.dumps({"capture": "atestiguacion-editorial", "note": statement})),
+    )
+
+    for org_slug, person, role, position_type, valid_from, confidence in ATTESTED:
+        organization_id = node_id_for(cursor, org_slug)
+        if not organization_id:
+            counts["sin_dependencia"].append(org_slug)
+            continue
+        excerpt = f"{person} — {role}. {statement}"
+        fragment_id = stable_id(f"fragment/atestiguacion/{org_slug}")
         cursor.execute(
             """
-            INSERT INTO assertions (id, assertion_type, subject_node_id, predicate, object_node_id,
-              relationship_id, valid_during, observed_at, extraction_method, confidence, status,
-              reviewed_by, reviewed_at, published_at)
-            VALUES (%s, 'relationship', %s, 'HOLDS', %s, %s, daterange(%s::date, NULL, '[)'), now(),
-                    'curated_manual_review', %s, 'published', %s, now(), now())
+            INSERT INTO source_fragments (id, snapshot_id, locator, fragment_text, fragment_hash, metadata)
+            VALUES (%s, %s, 'Atestiguación editorial', %s, %s, '{}'::jsonb)
             ON CONFLICT (id) DO NOTHING
-            RETURNING id::text
             """,
-            (assertion_id, person_node, position_node, relationship_id, valid_from, confidence, REVIEWER),
+            (fragment_id, snapshot_id, excerpt, sha256(excerpt.encode()).hexdigest()),
         )
-        if cursor.fetchone():
-            counts["afirmaciones"] += 1
-        cursor.execute(
-            """
-            INSERT INTO evidence_links (assertion_id, source_fragment_id, supports, note)
-            VALUES (%s, %s, true, 'Ficha o comunicado oficial de la dependencia.')
-            ON CONFLICT (assertion_id, source_fragment_id) DO NOTHING
-            """,
-            (assertion_id, fragment_id),
+        publish_titular(
+            cursor, org_slug, organization_id, person, role, position_type, valid_from, confidence,
+            f"atestiguacion:{slugify(person)}", fragment_id, "editorial_attestation",
+            "Atestiguación editorial: sin ficha oficial localizada. Sustituir cuando exista documento.",
+            None, counts,
         )
-
-        tenure_id = stable_id(f"tenure/{position_slug}/{person_slug}")
-        cursor.execute(
-            """
-            INSERT INTO tenures (id, person_id, position_id, status, selection_method, valid_during)
-            VALUES (%s, %s, %s, 'confirmed', 'presidential_appointment', daterange(%s::date, NULL, '[)'))
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id::text
-            """,
-            (tenure_id, person_node, position_node, valid_from),
-        )
-        if cursor.fetchone():
-            counts["tenencias"] += 1
     return counts
 
 
@@ -380,6 +487,11 @@ def main() -> None:
     url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://", 1)
     with psycopg.connect(url) as connection, connection.cursor() as cursor:
         counts = load_cabinet(cursor)
+        attested = load_attested(cursor)
+        for field in ("personas", "cargos", "tenencias", "relaciones", "afirmaciones"):
+            counts[field] += attested[field]
+        counts["sin_dependencia"] += attested["sin_dependencia"]
+        counts["atestiguados"] = len(ATTESTED) - len(attested["sin_dependencia"])
         counts["colegiados_enlazados"] = link_collegiate_bodies(cursor)
     print(counts)
 
