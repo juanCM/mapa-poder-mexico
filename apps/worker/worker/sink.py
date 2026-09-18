@@ -16,7 +16,16 @@ class PostgresReviewSink:
                 "INSERT INTO ingestion_runs (adapter_key, status, started_at) VALUES (%s, 'running', now()) RETURNING id",
                 (adapter_key,),
             )
-            return str(cursor.fetchone()[0])
+            run_id = str(cursor.fetchone()[0])
+            cursor.execute(
+                """
+                INSERT INTO review_batches (ingestion_run_id, title)
+                VALUES (%s, %s)
+                ON CONFLICT (ingestion_run_id) DO NOTHING
+                """,
+                (run_id, f"Lote {adapter_key}"),
+            )
+            return run_id
 
     def emit(self, run_id: str, candidates: Iterable[CandidateAssertion]) -> int:
         candidates = list(candidates)
@@ -25,24 +34,35 @@ class PostgresReviewSink:
             for candidate in candidates:
                 cursor.execute(
                     """
-                    INSERT INTO review_tasks (ingestion_run_id, candidate_key, title, summary, priority, status)
-                    SELECT %s, %s, %s, %s, 'medium', 'needs_review'
-                    WHERE NOT EXISTS (
-                      SELECT 1 FROM review_tasks
-                      WHERE candidate_key = %s AND status = 'needs_review'
-                    )
+                    INSERT INTO review_tasks (ingestion_run_id, batch_id, candidate_key, title, summary, priority, status)
+                    SELECT %s, rb.id, %s, %s, %s, 'medium', 'needs_review'
+                    FROM review_batches rb
+                    WHERE rb.ingestion_run_id = %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM review_tasks
+                        WHERE candidate_key = %s AND status = 'needs_review'
+                      )
                     """,
                     (
                         run_id,
                         candidate.candidate_id,
                         f"Revisar {candidate.predicate}: {candidate.subject_label}",
                         json.dumps(candidate.as_dict(), ensure_ascii=False),
+                        run_id,
                         candidate.candidate_id,
                     ),
                 )
                 count += cursor.rowcount
             cursor.execute(
                 "UPDATE ingestion_runs SET candidate_count = %s, status = 'succeeded', finished_at = now() WHERE id = %s",
+                (len(candidates), run_id),
+            )
+            cursor.execute(
+                """
+                UPDATE review_batches
+                SET title = title || ' · ' || %s || ' candidatos'
+                WHERE ingestion_run_id = %s
+                """,
                 (len(candidates), run_id),
             )
         return count
@@ -60,6 +80,7 @@ class PostgresReviewSink:
         result: FetchResult,
         content_hash: str,
         storage_path: str,
+        adapter_key: str,
     ) -> bool:
         with psycopg.connect(self.database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -80,7 +101,7 @@ class PostgresReviewSink:
                     result.document.title,
                     result.document.url,
                     result.document.source_type,
-                    result.document.source_key,
+                    adapter_key,
                 ),
             )
             source_id = cursor.fetchone()[0]

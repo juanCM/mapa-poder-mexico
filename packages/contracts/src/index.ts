@@ -73,6 +73,7 @@ export type ReviewTask = {
   source: string;
   detectedAt: string;
   summary: string;
+  batchId?: string | null;
 };
 
 export type MvpDataset = {
@@ -89,4 +90,102 @@ export type GraphResponse = {
   mode: GraphMode;
   nodes: GraphNode[];
   edges: GraphEdge[];
+};
+
+export type OccupancyStatus = "confirmed" | "acting" | "vacant" | "unrecorded";
+
+export type PortraitSummary = {
+  url: string;
+  sourceUrl: string;
+  credit: string;
+  alt: string;
+};
+
+export type OccupancySummary = {
+  id: string;
+  personId: string | null;
+  personSlug: string | null;
+  personLabel: string | null;
+  positionId: string;
+  positionSlug: string;
+  positionLabel: string;
+  organizationId: string;
+  status: OccupancyStatus;
+  validFrom: string | null;
+  validTo: string | null;
+  portrait: PortraitSummary | null;
+};
+
+export type PowerMapCounts = {
+  children: number;
+  positions: number;
+  people: number;
+  relationships: number;
+};
+
+export type PowerMapNode = GraphNode & {
+  parentId: string | null;
+  hierarchyDepth: number;
+  expandable: boolean;
+  counts: PowerMapCounts;
+  occupancy: OccupancySummary | null;
+  portrait: PortraitSummary | null;
+  metadata: Record<string, string | number | boolean | null>;
+};
+
+export type PowerMapGroup = {
+  id: string;
+  label: string;
+  branch: string;
+  parentId: string | null;
+  childCount: number;
+  kinds: NodeKind[];
+  expanded: boolean;
+};
+
+export type PowerMapRelationship = Omit<GraphEdge, "evidence"> & {
+  relationshipClass: "structure" | "power" | "competence" | "accountability" | "tenure";
+  hasEvidence: boolean;
+  sourceLabel?: string;
+  targetLabel?: string;
+};
+
+export type PowerMapStats = {
+  organizations: number;
+  positions: number;
+  people: number;
+  vacancies: number;
+  relationships: number;
+};
+
+export type PowerMapResponse = {
+  asOf: string;
+  root: string | null;
+  nodes: PowerMapNode[];
+  groups: PowerMapGroup[];
+  relationships: PowerMapRelationship[];
+  ancestors: PowerMapNode[];
+  stats: PowerMapStats;
+  nextCursor: string | null;
+};
+
+export type NodeContextResponse = {
+  asOf: string;
+  node: PowerMapNode;
+  occupancies: OccupancySummary[];
+  relationships: Array<PowerMapRelationship & { evidence: EvidenceSummary[] }>;
+  changes: ChangeEvent[];
+};
+
+export type ReviewBatch = {
+  id: string;
+  adapter: string;
+  status: string;
+  title: string;
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  published: number;
+  createdAt: string;
 };

@@ -2,9 +2,9 @@
 
 ## Propósito y estado
 
-Mapa de Poder México es una plataforma pública para explorar la estructura formal del Estado mexicano, las personas que ocupan cargos y las relaciones de autoridad sustentadas en fuentes oficiales. El repositorio contiene un MVP vertical funcional, no una cobertura exhaustiva del Gobierno Federal.
+Mapa de Poder México es una plataforma pública para explorar la estructura formal del Estado mexicano, las personas que ocupan cargos y las relaciones de autoridad sustentadas en fuentes oficiales. El repositorio contiene una segunda versión del MVP vertical funcional, no una cobertura exhaustiva del Gobierno Federal.
 
-El producto combina: mapa interactivo, fichas de instituciones/personas/relaciones, consulta temporal, fuentes y cambios, y una consola editorial protegida para revisar candidatos generados por ingestión automática.
+El producto combina: mapa radial semántico, fichas de instituciones/personas/relaciones, consulta temporal, fuentes y cambios, y una consola editorial protegida para revisar candidatos generados por ingestión automática.
 
 ## Arquitectura de alto nivel
 
@@ -24,12 +24,13 @@ Es un monorepo npm con workspaces para la web y paquetes TypeScript, además de 
 
 ## Mapa del repositorio
 
-- `apps/web/`: aplicación Next.js 16 + React 19. App Router, páginas públicas y administración, API routes proxy, renderizado del grafo con Sigma.js/Graphology.
+- `apps/web/`: aplicación Next.js 16 + React 19. App Router, páginas públicas y administración, API routes proxy y mapa radial SVG React con zoom/pan controlado; ya no usa Sigma.js/Graphology.
 - `apps/api/`: API FastAPI. Lee PostgreSQL si existe `DATABASE_URL`; sin ella sirve `packages/contracts/data/mvp.json`.
 - `apps/worker/`: ingestión de fuentes oficiales. Descubre documentos, los descarga, calcula hashes, guarda snapshots y crea tareas editoriales; no publica automáticamente.
 - `packages/contracts/`: tipos TypeScript compartidos y dataset MVP `data/mvp.json`.
 - `packages/taxonomy/`: vocabularios de tipos de relación, organización y dominio de política pública.
 - `db/migrations/0001_initial.sql`: esquema PostgreSQL, índices, restricciones, trigger de inmutabilidad y vista publicada.
+- `db/migrations/0002_power_map.sql`: extensión aditiva para retratos oficiales, metadatos de cargos, lotes editoriales, tenencias materializadas e índices del mapa.
 - `db/seeds/`: seed SQL MVP e importador JSON→PostgreSQL.
 - `sources/fixtures/`: HTML de prueba de adaptadores.
 - `docs/operations.md`: despliegue, operación editorial, incorporación de fuentes, cobertura APF e incidentes.
@@ -49,7 +50,7 @@ El núcleo del modelo vive en `db/migrations/0001_initial.sql`:
 - `source_documents` identifica la fuente; `source_snapshots` conserva cada versión descargada; `source_fragments` localiza el fragmento relevante.
 - `assertions` representa afirmaciones temporales extraídas o revisadas; `evidence_links` vincula afirmaciones con evidencia.
 - `entity_aliases` y `external_identifiers` soportan resolución de identidad y búsqueda.
-- `ingestion_runs` registra ejecuciones; `review_tasks` es la cola editorial; `government_change_events` publica cambios verificables.
+- `ingestion_runs` registra ejecuciones; `review_tasks` es la cola editorial; `review_batches` agrupa tareas de una ingestión; `government_change_events` publica cambios verificables.
 
 ### Reglas invariantes
 
@@ -71,26 +72,41 @@ Endpoints principales:
 - `GET /v1/search?q=&types=&as_of=`: búsqueda temporal por nombre/alias.
 - `GET /v1/nodes/{identifier}`: detalle por UUID o slug.
 - `GET /v1/graph?mode=organization|power&as_of=&root=&depth=&relation_types=`: grafo publicado y temporal.
+- `GET /v1/power-map?as_of=&root=&depth=&cursor=&limit=`: mapa radial inicial y expansiones paginadas; no incluye evidencia completa.
+- `GET /v1/nodes/{identifier}/context?as_of=`: contexto completo de una entidad, con evidencia e historial bajo demanda.
 - `GET /v1/relationships/{identifier}`: detalle de relación publicada.
 - `GET /v1/timeline?node_id=` y `GET /v1/changes`: eventos de cambio.
-- `GET /v1/admin/review-tasks` y `GET /v1/admin/overview`: endpoints protegidos.
+- `GET /v1/admin/review-tasks`, `GET /v1/admin/review-batches` y `GET /v1/admin/overview`: endpoints protegidos.
 - `POST /v1/admin/review-tasks/{task_id}/decision`: aprueba o rechaza una tarea.
+- `POST /v1/admin/review-batches/{id}/decision`: decisión masiva, con exclusiones por tarea.
 
 Cuando hay `DATABASE_URL`, las consultas leen PostgreSQL. Sin ella, la API cae al dataset JSON para permitir desarrollo de la interfaz. La protección API usa `Authorization: Bearer ADMIN_API_TOKEN`; en development sin token existe un bypass intencional.
 
 ## Web Next.js
 
-La aplicación está en `apps/web/app/` y usa App Router. `lib/data.ts` carga el dataset compartido para el modo seed. `app/api/graph/route.ts` funciona como proxy server-side hacia FastAPI. `lib/admin.ts` valida sesión Supabase y allowlist de correos; el endpoint de decisión reenvía al API.
+La aplicación está en `apps/web/app/` y usa App Router. `lib/data.ts` carga el dataset compartido para el modo seed. Las rutas `app/api/power-map`, `app/api/nodes` y `app/api/search` funcionan como proxies server-side hacia FastAPI. `lib/admin.ts` valida sesión Supabase y allowlist de correos; los endpoints de decisión reenvían al API.
 
 Componentes relevantes:
 
-- `graph-explorer.tsx`: grafo Sigma, modos organigrama/poder, fecha de consulta, filtros, selección de nodos/aristas y tabla accesible.
+- `power-map/power-map-loader.tsx`: carga diferida del explorador cliente desde la página servidor `/mapa`.
+- `power-map/power-map-explorer.tsx`: estado URL (`asOf`, `root`, `node`), búsqueda, filtros, expansión y panel de selección.
+- `power-map/radial-power-map.tsx`: SVG accesible, sectores, anillos, zoom/pan, hover/foco y relaciones directas seleccionadas.
+- `power-map/power-map-layout.ts`: geometría determinista, sectores y deduplicación de nodos antes del render.
+- `power-map/node-selection-panel.tsx`: ficha de institución, cargo o persona, evidencia, relaciones e historial.
 - `node-detail.tsx`: ficha de entidad y relaciones.
-- `admin-dashboard.tsx`/`admin-review-board.tsx`: revisión editorial.
+- `admin-dashboard.tsx`/`admin-batch-board.tsx`: revisión editorial por tarea y por lote.
 - `search-box.tsx`: búsqueda local del MVP.
 - `site-header.tsx`/`site-footer.tsx`: shell público.
 
 Rutas públicas: `/`, `/mapa`, `/cambios`, `/personas/[slug]`, `/instituciones/[slug]`, `/relaciones/[id]`, `/fuentes/[id]`. Administración: `/admin/login`, `/admin`; callback: `/auth/callback`.
+
+### Forma y comportamiento del mapa
+
+El mapa representa al Pueblo de México en el centro, asociado con el artículo 39 constitucional. Ejecutivo, Legislativo, Judicial y órganos constitucionales autónomos ocupan sectores con tamaños semánticos, no proporcionales a sus conteos. Los autónomos no son un cuarto poder.
+
+Los anillos corresponden a poderes/órganos superiores, instituciones, cargos y personas. Las agrupaciones voluminosas —cámaras, paraestatales y colegiados— se muestran primero con conteo; al expandirse, pasan al centro y su contenido se pagina radialmente. Seleccionar un nodo muestra únicamente sus relaciones directas, dirección, clase y evidencia disponible.
+
+El nodo de ciudadanía se reserva para el centro. El layout y la última lista de render deduplican por `id`: esto protege la UI ante un resultado repetido por joins o datos legados y evita claves React duplicadas. Hover tiene equivalentes de foco y selección; en móvil, el detalle se presenta como hoja inferior.
 
 Al modificar Next.js, leer primero las guías locales de `apps/web/node_modules/next/dist/docs/` y conservar el bloque generado en `apps/web/AGENTS.md`.
 
@@ -111,7 +127,7 @@ Para una nueva fuente: añadir adaptador, fixture representativo, prueba contrac
 
 ## Contratos y taxonomía
 
-`packages/contracts/src/index.ts` define `GraphNode`, `GraphEdge`, `EvidenceSummary`, `SourceRecord`, `ChangeEvent`, `ReviewTask`, `MvpDataset` y `GraphResponse`. Mantener sus nombres camelCase alineados con los alias Pydantic de la API.
+`packages/contracts/src/index.ts` define `GraphNode`, `GraphEdge`, `EvidenceSummary`, `SourceRecord`, `ChangeEvent`, `ReviewTask`, `MvpDataset`, `GraphResponse`, `PowerMapNode`, `PowerMapGroup`, `OccupancySummary`, `PortraitSummary`, `PowerMapRelationship`, `PowerMapResponse` y `NodeContextResponse`. Mantener sus nombres camelCase alineados con los alias Pydantic de la API.
 
 `packages/taxonomy/src/index.ts` contiene valores como `PART_OF`, `HEADS`, `HOLDS`, `APPOINTS`, `OVERSEES`, `AUDITS`, etc. Reutilizar estos vocabularios antes de inventar tipos nuevos.
 
@@ -139,6 +155,7 @@ Inicialización SQL:
 
 ```bash
 psql postgresql://mapa:mapa@localhost:5432/mapa_poder -f db/migrations/0001_initial.sql
+psql postgresql://mapa:mapa@localhost:5432/mapa_poder -f db/migrations/0002_power_map.sql
 psql postgresql://mapa:mapa@localhost:5432/mapa_poder -f db/seeds/0001_mvp.sql
 ```
 
@@ -154,7 +171,7 @@ Nunca exponer service keys en el cliente ni versionar secretos. El archivo `.env
 
 - La autorización API es un bearer token compartido y el bypass de desarrollo debe permanecer deshabilitado en producción.
 - El seed JSON y PostgreSQL son dos caminos de datos; cualquier cambio de contrato debe probar ambos.
-- La vista de grafo hace consultas y carga evidencia por relación; con mayor volumen será necesario paginar, precalcular o agrupar consultas.
+- `/v1/graph` sigue siendo heredado. El mapa radial pagina expansiones y obtiene evidencia sólo al seleccionar, pero sus consultas deben revisarse con datos federales completos.
 - La resolución de entidades y la publicación de candidatos aún dependen de revisión humana; no declarar cobertura completa por el conteo del seed.
 - El worker hace descargas síncronas y no implementa todavía reintentos/backoff explícitos ni control avanzado de cambios.
 - La fuente de personas (nómina/directorios) requiere importación por lotes, deduplicación, historial de ocupación y aprobación editorial; no crear millones de tareas individuales.
