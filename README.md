@@ -52,6 +52,14 @@ PowerMapExplorer
 
 El render deduplica entidades por identificador y reserva el nodo de ciudadanía
 para el centro, incluso ante registros heredados con una rama incorrecta.
+Los nodos emplean iconografía por tipo de entidad y transiciones respetuosas de
+`prefers-reduced-motion`. Las cámaras legislativas ofrecen además una vista de
+hemiciclo que representa cada cargo estable y agrupa los escaños por el
+`parliamentaryGroup` publicado; esta vista no infiere afiliaciones ausentes.
+En las expansiones, los anillos conservan la jerarquía institución → cargo →
+persona y alinean cada descendiente con su entidad superior para reducir cruces.
+El cargo de la Presidencia de México tiene un distintivo visual propio que no
+depende de la persona que lo ocupe en el corte consultado.
 
 ## API del mapa
 

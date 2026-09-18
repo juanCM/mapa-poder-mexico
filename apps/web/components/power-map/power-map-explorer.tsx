@@ -1,10 +1,11 @@
 "use client";
 
-import { CalendarDays, ChevronLeft, Database, Search, X } from "lucide-react";
+import { Armchair, CalendarDays, ChevronLeft, Database, House, Orbit, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { GraphNode, NodeContextResponse, PowerMapNode, PowerMapResponse } from "@mapa/contracts";
 import { createFallbackNodeContext, createFallbackPowerMap } from "@/lib/power-map";
 import { NodeSelectionPanel } from "./node-selection-panel";
+import { ParliamentaryChamber } from "./parliamentary-chamber";
 import { RadialPowerMap } from "./radial-power-map";
 import styles from "./power-map.module.css";
 
@@ -27,6 +28,7 @@ export function PowerMapExplorer({ initialMap, initialError }: { initialMap: Pow
   const [loading, setLoading] = useState(false);
   const [contextLoading, setContextLoading] = useState(false);
   const [error, setError] = useState(initialError);
+  const [viewMode, setViewMode] = useState<"radial" | "chamber">("radial");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -57,6 +59,11 @@ export function PowerMapExplorer({ initialMap, initialError }: { initialMap: Pow
   }, []);
 
   const breadcrumbs = [...map.ancestors, ...(map.root ? map.nodes.filter((node) => node.id === map.root) : [])];
+  const rootNode = map.nodes.find((node) => node.id === map.root) ?? null;
+  const isLegislativeChamber = rootNode?.category === "legislative_chamber";
+  const structureNodes = isLegislativeChamber
+    ? map.nodes.filter((node) => node.category !== "legislative_seat" && node.metadata.positionType !== "legislative_seat" && node.kind !== "person")
+    : map.nodes;
 
   function writeUrl(values: { root?: string | null; node?: string | null; date?: string }, replace = false) {
     const params = new URLSearchParams(window.location.search);
@@ -73,7 +80,8 @@ export function PowerMapExplorer({ initialMap, initialError }: { initialMap: Pow
     setLoading(true);
     setError(undefined);
     try {
-      const params = new URLSearchParams({ asOf: nextDate, depth: "2", limit: root ? "120" : "500" });
+      const requestedRoot = root ? map.nodes.find((node) => node.id === root || node.slug === root) : null;
+      const params = new URLSearchParams({ asOf: nextDate, depth: "2", limit: requestedRoot?.category === "legislative_chamber" ? "1000" : root ? "120" : "500" });
       if (root) params.set("root", root);
       if (cursor) params.set("cursor", cursor);
       const response = await fetch(`/api/power-map?${params}`, { cache: "no-store" });
@@ -88,12 +96,22 @@ export function PowerMapExplorer({ initialMap, initialError }: { initialMap: Pow
         : responseMap;
       setMap(next);
       setAsOf(nextDate);
+      if (!cursor) {
+        setSelected(null);
+        setContext(null);
+        const nextRoot = next.nodes.find((node) => node.id === next.root);
+        setViewMode(nextRoot?.category === "legislative_chamber" ? "chamber" : "radial");
+      }
       if (updateUrl) writeUrl({ root: next.root, node: null, date: nextDate });
       return next;
     } catch (cause) {
       const fallback = createFallbackPowerMap(nextDate, root);
       setMap(fallback);
       setAsOf(nextDate);
+      if (!cursor) {
+        setSelected(null);
+        setContext(null);
+      }
       setError(cause instanceof Error ? `${cause.message} Se muestran datos demostrativos.` : "No fue posible cargar el mapa.");
       if (updateUrl) writeUrl({ root: fallback.root, node: null, date: nextDate });
       return fallback;
@@ -184,7 +202,12 @@ export function PowerMapExplorer({ initialMap, initialError }: { initialMap: Pow
           )}
         </div>
         <label className={styles.dateControl}><CalendarDays size={15} /><span>Fecha</span><input type="date" value={asOf} onChange={(event) => void loadMap(event.target.value, map.root)} /></label>
-        {map.root && <button className={styles.backButton} type="button" onClick={() => void loadMap(asOf, map.ancestors.at(-1)?.id ?? null)}><ChevronLeft size={15} /> Volver</button>}
+        {map.root && (
+          <div className={styles.mapNavigation}>
+            <button className={styles.backButton} type="button" onClick={() => void loadMap(asOf, map.ancestors.at(-1)?.id ?? null)}><ChevronLeft size={15} /> Nivel anterior</button>
+            <button className={styles.homeButton} type="button" onClick={() => void loadMap(asOf, null)}><House size={15} /> Mapa general</button>
+          </div>
+        )}
       </div>
 
       <div className={styles.legendRow}>
@@ -197,11 +220,21 @@ export function PowerMapExplorer({ initialMap, initialError }: { initialMap: Pow
             <button key={branch} type="button" data-branch={branch} aria-pressed={enabledBranches.has(branch)} onClick={() => toggleBranch(branch)}><span />{label}</button>
           ))}
         </div>
+        {isLegislativeChamber && (
+          <div className={styles.viewSwitch} aria-label="Tipo de visualización">
+            <button type="button" aria-pressed={viewMode === "chamber"} onClick={() => setViewMode("chamber")}><Armchair size={14} /> Hemiciclo</button>
+            <button type="button" aria-pressed={viewMode === "radial"} onClick={() => setViewMode("radial")}><Orbit size={14} /> Estructura</button>
+          </div>
+        )}
       </div>
 
       <div className={styles.workspace}>
         <div className={styles.mapColumn}>
-          <RadialPowerMap nodes={map.nodes} relationships={map.relationships} root={map.root} selectedId={selected?.id ?? null} enabledBranches={enabledBranches} onSelect={(node) => void selectNode(node)} />
+          {viewMode === "chamber" && isLegislativeChamber ? (
+            <ParliamentaryChamber nodes={map.nodes} root={map.root} selectedId={selected?.id ?? null} onSelect={(node) => void selectNode(node)} />
+          ) : (
+            <RadialPowerMap nodes={structureNodes} relationships={map.relationships} root={map.root} selectedId={selected?.id ?? null} enabledBranches={enabledBranches} onSelect={(node) => void selectNode(node)} />
+          )}
           <div className={styles.mapStatus}>
             <span><Database size={12} /> {map.stats.organizations} instituciones · {map.stats.positions} cargos · {map.stats.people} personas</span>
             <span>{loading ? "Actualizando…" : `Corte ${asOf}`}</span>
