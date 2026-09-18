@@ -1,8 +1,9 @@
 "use client";
 
-import { Minus, Plus, RotateCcw } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { Minus, Plus, RotateCcw, UsersRound } from "lucide-react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import type { PowerMapNode, PowerMapRelationship } from "@mapa/contracts";
+import { EntityIcon, isFederalPresidency } from "./entity-icon";
 import styles from "./power-map.module.css";
 import {
   annularSector,
@@ -53,6 +54,9 @@ export function RadialPowerMap({
       .filter((edge) => selectedId && (edge.source === selectedId || edge.target === selectedId))
       .map((edge) => [edge.id, edge])
   ).values()];
+  const contextEdges = root
+    ? relationships.filter((edge) => !selectedEdges.some((selectedEdge) => selectedEdge.id === edge.id))
+    : [];
   const sovereigntyNode = positioned.find((node) => node.slug === "ciudadania") ?? positioned.find((node) => node.branch === "state");
 
   function zoom(delta: number) {
@@ -117,32 +121,43 @@ export function RadialPowerMap({
             </g>
           ))}
 
-          {[205, 286, 356].map((radius) => <circle key={radius} cx={MAP_CENTER} cy={MAP_CENTER} r={radius} className={styles.ring} />)}
+          {(root ? [205, 340, 405] : [205, 286, 356]).map((radius) => <circle key={radius} cx={MAP_CENTER} cy={MAP_CENTER} r={radius} className={styles.ring} />)}
 
           <g className={styles.relationships}>
+            {contextEdges.map((edge) => {
+              const source = byId.get(edge.source);
+              const target = byId.get(edge.target);
+              if (!source || !target) return null;
+              return (
+                <path
+                  key={`context-${edge.id}`}
+                  d={relationshipPath(source, target)}
+                  className={`${styles.relationship} ${styles.relationshipContext} ${root && selectedId === root ? styles.relationshipContextRoot : ""} ${styles[`relationship_${edge.relationshipClass}`]}`}
+                />
+              );
+            })}
             {selectedEdges.map((edge) => {
               const source = byId.get(edge.source);
               const target = byId.get(edge.target);
               if (!source || !target) return null;
-              const controlX = (source.x + target.x + MAP_CENTER) / 3;
-              const controlY = (source.y + target.y + MAP_CENTER) / 3;
               return (
                 <path
                   key={edge.id}
-                  d={`M ${source.x} ${source.y} Q ${controlX} ${controlY} ${target.x} ${target.y}`}
-                  className={`${styles.relationship} ${styles[`relationship_${edge.relationshipClass}`]}`}
+                  d={relationshipPath(source, target)}
+                  className={`${styles.relationship} ${styles.relationshipActive} ${styles[`relationship_${edge.relationshipClass}`]}`}
                   markerEnd="url(#power-map-arrow)"
                 />
               );
             })}
           </g>
 
-          {visibleNodes.map((node) => (
+          {visibleNodes.map((node, index) => (
             <MapNode
               key={node.id}
               node={node}
+              index={index}
               selected={node.id === selectedId}
-              dimmed={Boolean(selectedId && node.id !== selectedId && !connected.has(node.id))}
+              dimmed={Boolean(selectedId && !(root && selectedId === root) && node.id !== selectedId && !connected.has(node.id))}
               onSelect={() => onSelect(node)}
               onHover={setHovered}
             />
@@ -165,9 +180,10 @@ export function RadialPowerMap({
               }}
             >
               <circle cx={MAP_CENTER} cy={MAP_CENTER} r="106" />
-              <text x={MAP_CENTER} y={MAP_CENTER - 10} textAnchor="middle">Pueblo de México</text>
-              <text x={MAP_CENTER} y={MAP_CENTER + 18} textAnchor="middle" className={styles.sovereigntyArticle}>La soberanía reside en el pueblo</text>
-              <text x={MAP_CENTER} y={MAP_CENTER + 39} textAnchor="middle" className={styles.sovereigntyArticle}>CPEUM · artículo 39</text>
+              <UsersRound x={MAP_CENTER - 13} y={MAP_CENTER - 49} width={26} height={26} className={styles.sovereigntyIcon} />
+              <text x={MAP_CENTER} y={MAP_CENTER - 3} textAnchor="middle">Pueblo de México</text>
+              <text x={MAP_CENTER} y={MAP_CENTER + 24} textAnchor="middle" className={styles.sovereigntyArticle}>La soberanía reside en el pueblo</text>
+              <text x={MAP_CENTER} y={MAP_CENTER + 45} textAnchor="middle" className={styles.sovereigntyArticle}>CPEUM · artículo 39</text>
             </g>
           )}
         </g>
@@ -180,6 +196,15 @@ export function RadialPowerMap({
           <small>{hovered.occupancy?.personLabel ?? (hovered.counts.children ? `${hovered.counts.children} elementos` : "Selecciona para consultar relaciones")}</small>
         </div>
       )}
+      {(root || selectedEdges.length > 0) && (
+        <div className={styles.relationshipLegend} aria-label="Leyenda de relaciones">
+          <strong>{selectedEdges.length ? `${selectedEdges.length} relaciones directas` : "Relaciones visibles"}</strong>
+          <span><i className={styles.legendStructure} />Estructura</span>
+          <span><i className={styles.legendPower} />Autoridad</span>
+          <span><i className={styles.legendAccountability} />Control</span>
+          <span><i className={styles.legendTenure} />Ocupación</span>
+        </div>
+      )}
       <p className="sr-only" aria-live="polite">{selectedId ? `Nodo seleccionado: ${byId.get(selectedId)?.label ?? selectedId}` : "Ningún nodo seleccionado"}</p>
     </div>
   );
@@ -187,12 +212,14 @@ export function RadialPowerMap({
 
 function MapNode({
   node,
+  index,
   selected,
   dimmed,
   onSelect,
   onHover
 }: {
   node: PositionedNode;
+  index: number;
   selected: boolean;
   dimmed: boolean;
   onSelect: () => void;
@@ -201,8 +228,9 @@ function MapNode({
   const person = node.kind === "person";
   const position = node.kind === "position";
   const branch = node.category === "branch";
-  const size = branch ? 24 : node.expandable ? 18 : person ? 13 : position ? 12 : 10;
-  const labelVisible = !node.compact && (branch || node.expandable || selected || node.radius < 220);
+  const presidential = isFederalPresidency(node);
+  const size = presidential ? 27 : branch ? 29 : node.expandable ? 23 : person ? 16 : position ? 15 : 16;
+  const labelVisible = presidential || (!node.compact && (branch || node.expandable || selected || person || node.radius < 220));
   return (
     <g
       data-map-node
@@ -210,8 +238,9 @@ function MapNode({
       tabIndex={0}
       aria-label={`${node.label}. ${nodeTypeLabel(node)}${node.expandable ? `. Contiene ${node.counts.children} elementos` : ""}`}
       aria-pressed={selected}
-      className={`${styles.node} ${styles[`node_${node.kind}`]} ${branch ? styles.node_branch : ""} ${selected ? styles.node_selected : ""} ${dimmed ? styles.node_dimmed : ""}`}
+      className={`${styles.node} ${styles[`node_${node.kind}`]} ${branch ? styles.node_branch : ""} ${presidential ? styles.nodePresidency : ""} ${selected ? styles.node_selected : ""} ${dimmed ? styles.node_dimmed : ""}`}
       transform={`translate(${node.x} ${node.y})`}
+      style={{ "--node-delay": `${Math.min(index * 22, 420)}ms` } as CSSProperties}
       onClick={(event) => { event.stopPropagation(); onSelect(); }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(); }
@@ -221,17 +250,28 @@ function MapNode({
       onFocus={() => onHover(node)}
       onBlur={() => onHover(null)}
     >
-      {node.portrait ? (
-        <image href={node.portrait.url} x={-size} y={-size} width={size * 2} height={size * 2} preserveAspectRatio="xMidYMid slice" clipPath={`url(#portrait-${node.id})`} />
-      ) : position ? (
-        <><rect x={-size} y={-size} width={size * 2} height={size * 2} rx="5" /><circle cx={size * 0.65} cy={-size * 0.65} r="4" /></>
-      ) : (
-        <circle cx="0" cy="0" r={size} />
-      )}
-      {node.expandable && <text className={styles.nodeCount} y="4" textAnchor="middle">{node.counts.children}</text>}
+      <g className={styles.nodeGlyph}>
+        {presidential && <circle cx="0" cy="0" r={size + 9} className={styles.presidentialHalo} />}
+        {node.portrait ? (
+          <image href={node.portrait.url} x={-size} y={-size} width={size * 2} height={size * 2} preserveAspectRatio="xMidYMid slice" clipPath={`url(#portrait-${node.id})`} />
+        ) : (
+          <circle cx="0" cy="0" r={size} />
+        )}
+        {!node.portrait && <EntityIcon node={node} x={-size * .43} y={-size * .58} width={size * .86} height={size * .86} className={styles.nodeIcon} strokeWidth={1.8} />}
+        {node.expandable && <text className={styles.nodeCount} y={size * .62} textAnchor="middle">{node.counts.children}</text>}
+      </g>
       {labelVisible && <text className={styles.nodeLabel} y={size + 17} textAnchor="middle">{shorten(node.shortLabel, 24)}</text>}
     </g>
   );
+}
+
+function relationshipPath(source: PositionedNode, target: PositionedNode) {
+  const middleX = (source.x + target.x) / 2;
+  const middleY = (source.y + target.y) / 2;
+  const towardCenter = .18;
+  const controlX = middleX + (MAP_CENTER - middleX) * towardCenter;
+  const controlY = middleY + (MAP_CENTER - middleY) * towardCenter;
+  return `M ${source.x} ${source.y} Q ${controlX} ${controlY} ${target.x} ${target.y}`;
 }
 
 function shorten(value: string, max: number) {

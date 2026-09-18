@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowDownLeft, ArrowUpRight, BookOpen, ChevronRight, ExternalLink, Focus, UserRound, X } from "lucide-react";
 import type { NodeContextResponse, PowerMapNode } from "@mapa/contracts";
 import { formatDate, formatStartDate, hrefForNode } from "@/lib/data";
+import { EntityIcon, isFederalPresidency } from "./entity-icon";
 import styles from "./power-map.module.css";
 
 export function NodeSelectionPanel({
@@ -36,6 +37,7 @@ export function NodeSelectionPanel({
   }
 
   const details = context?.node ?? node;
+  const presidential = isFederalPresidency(details);
   const occupancy = details.occupancy ?? context?.occupancies[0] ?? null;
   const portrait = details.portrait ?? occupancy?.portrait ?? null;
   const relationNodes = new Map(nodes.map((item) => [item.id, item]));
@@ -44,7 +46,7 @@ export function NodeSelectionPanel({
     <aside className={`${styles.detailPanel} ${styles.detailPanelSelected}`} aria-live="polite" aria-label={`Detalle de ${details.label}`}>
       <button type="button" className={styles.closeDetail} onClick={onClose} aria-label="Cerrar detalle"><X size={17} /></button>
       <header className={styles.detailHeader}>
-        <span className={styles.detailType}>{typeLabel(details)}</span>
+        <span className={`${styles.detailType} ${presidential ? styles.detailTypePresidency : ""}`}><EntityIcon node={details} size={14} />{presidential ? "Titular del Poder Ejecutivo" : typeLabel(details)}</span>
         <div className={styles.identityRow}>
           {portrait ? (
             <img src={portrait.url} alt={portrait.alt} className={styles.portrait} onError={(event) => { event.currentTarget.hidden = true; }} />
