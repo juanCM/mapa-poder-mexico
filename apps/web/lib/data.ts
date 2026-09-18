@@ -44,6 +44,12 @@ export function formatDate(date: string | null): string {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
+export function formatStartDate(date: string | null): string {
+  // Un fin abierto significa "sigue vigente"; un inicio abierto significa que
+  // la fuente no lo declara. Reutilizar `formatDate` los confundiría.
+  return date ? formatDate(date) : "No consta";
+}
+
 export function hrefForNode(node: GraphNode): string {
   if (node.kind === "person") return `/personas/${node.slug}`;
   return `/instituciones/${node.slug}`;

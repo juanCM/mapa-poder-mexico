@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, BookOpenCheck, CalendarRange, ExternalLink } from "lucide-react";
-import { dataset, formatDate, getNodeById, getRelationship, hrefForNode } from "@/lib/data";
+import { dataset, formatDate, formatStartDate, getNodeById, getRelationship, hrefForNode } from "@/lib/data";
 
 export function generateStaticParams() {
   return dataset.edges.map((edge) => ({ id: edge.id }));
@@ -29,7 +29,7 @@ export default async function RelationshipPage({ params }: { params: Promise<{ i
           </div>
           <div className="section-sm">
             <span className="eyebrow"><CalendarRange size={14} /> Vigencia</span>
-            <h2>{formatDate(relation.validFrom)} <ArrowRight size={18} /> {formatDate(relation.validTo)}</h2>
+            <h2>{formatStartDate(relation.validFrom)} <ArrowRight size={18} /> {formatDate(relation.validTo)}</h2>
             {relation.condition && <div className="notice"><strong>Condición del ejercicio:</strong> {relation.condition}</div>}
             <h2>Fundamento jurídico</h2>
             <p className="detail-summary">{relation.legalBasis}</p>

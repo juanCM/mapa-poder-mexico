@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { ArrowDownLeft, ArrowUpRight, BookOpen, ChevronRight, ExternalLink, Focus, UserRound, X } from "lucide-react";
 import type { NodeContextResponse, PowerMapNode } from "@mapa/contracts";
-import { formatDate, hrefForNode } from "@/lib/data";
+import { formatDate, formatStartDate, hrefForNode } from "@/lib/data";
 import styles from "./power-map.module.css";
 
 export function NodeSelectionPanel({
@@ -61,7 +61,7 @@ export function NodeSelectionPanel({
 
       <div className={styles.factGrid}>
         <div><span>Poder o categoría</span><strong>{branchLabel(details.branch)}</strong></div>
-        <div><span>Vigencia</span><strong>{details.validTo ? `Hasta ${formatDate(details.validTo)}` : `Desde ${formatDate(details.validFrom)}`}</strong></div>
+        <div><span>Vigencia</span><strong>{details.validTo ? `Hasta ${formatDate(details.validTo)}` : `Desde ${formatStartDate(details.validFrom)}`}</strong></div>
         <div><span>Relaciones</span><strong>{details.counts.relationships}</strong></div>
         <div><span>Estado del cargo</span><strong>{occupancyLabel(details, occupancy?.status)}</strong></div>
       </div>

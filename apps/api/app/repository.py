@@ -36,8 +36,13 @@ def database_check() -> bool:
         return cursor.fetchone()[0] == 1
 
 
-def range_dates(value: Any) -> tuple[str, str | None]:
-    start = value.lower.isoformat()
+def range_dates(value: Any) -> tuple[str | None, str | None]:
+    """Traduce un rango temporal, admitiendo un inicio no afirmado.
+
+    Un límite inferior abierto significa que la fuente no declara desde cuándo
+    existe la entidad, no que exista desde siempre ni desde que se observó.
+    """
+    start = value.lower.isoformat() if value.lower else None
     end = None
     if value.upper:
         end = (value.upper - timedelta(days=1)).isoformat()

@@ -21,7 +21,7 @@ export type GraphNode = {
   category: string;
   branch: string;
   jurisdiction: string;
-  validFrom: string;
+  validFrom: string | null;
   validTo: string | null;
   currentRole?: string;
   organizationSlug?: string;
@@ -38,7 +38,7 @@ export type GraphEdge = {
   description: string;
   condition: string | null;
   legalBasis: string;
-  validFrom: string;
+  validFrom: string | null;
   validTo: string | null;
   evidence: EvidenceSummary[];
 };

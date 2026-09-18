@@ -34,7 +34,25 @@ class SupabaseSnapshotStorage:
             },
             timeout=30,
         )
-        if response.status_code == 409:
+        if self._already_stored(response):
             return key
         response.raise_for_status()
         return key
+
+    @staticmethod
+    def _already_stored(response: httpx.Response) -> bool:
+        """Un objeto repetido no es un error: la clave es el hash del contenido.
+
+        Storage no responde 409 a un duplicado, sino 400 con `KeyAlreadyExists`
+        en el cuerpo, así que mirar sólo el código HTTP rompía cualquier
+        reingesta de una fuente que no ha cambiado.
+        """
+        if response.status_code == 409:
+            return True
+        if response.status_code != 400:
+            return False
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        return body.get("code") == "KeyAlreadyExists" or body.get("error") == "Duplicate"
