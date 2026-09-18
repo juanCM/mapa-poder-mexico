@@ -294,6 +294,96 @@ def review_tasks() -> list[dict[str, Any]]:
     return load_dataset()["reviewTasks"]
 
 
+def admin_overview() -> dict[str, list[dict[str, Any]]]:
+    """Return operational records for the editorial console.
+
+    The seed response intentionally only contains records that exist in the
+    curated dataset: it must not pretend that an ingestion run or duplicate
+    candidate was created when PostgreSQL is not configured.
+    """
+    if database_enabled():
+        with psycopg.connect(database_url(), row_factory=dict_row) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, adapter_key, status, started_at, finished_at, discovered_count,
+                       candidate_count, snapshot_count, error_message, created_at
+                FROM ingestion_runs
+                ORDER BY created_at DESC
+                LIMIT 100
+                """
+            )
+            runs = [
+                {
+                    "id": str(row["id"]), "adapter": row["adapter_key"], "status": row["status"],
+                    "startedAt": row["started_at"].isoformat() if row["started_at"] else None,
+                    "finishedAt": row["finished_at"].isoformat() if row["finished_at"] else None,
+                    "discoveredCount": row["discovered_count"], "candidateCount": row["candidate_count"],
+                    "snapshotCount": row["snapshot_count"], "errorMessage": row["error_message"],
+                    "createdAt": row["created_at"].isoformat(),
+                }
+                for row in cursor.fetchall()
+            ]
+            cursor.execute(
+                """
+                SELECT ss.content_hash AS candidate_key, COUNT(DISTINCT sd.id) AS count,
+                       MAX(ss.retrieved_at) AS detected_at,
+                       array_agg(DISTINCT sd.title) AS titles
+                FROM source_snapshots ss
+                JOIN source_documents sd ON sd.id = ss.source_document_id
+                GROUP BY ss.content_hash
+                HAVING COUNT(DISTINCT sd.id) > 1
+                ORDER BY MAX(ss.retrieved_at) DESC
+                LIMIT 100
+                """
+            )
+            duplicates = [
+                {
+                    "candidateKey": row["candidate_key"], "count": row["count"],
+                    "detectedAt": row["detected_at"].isoformat(), "titles": row["titles"],
+                }
+                for row in cursor.fetchall()
+            ]
+            cursor.execute(
+                """
+                SELECT sd.slug, sd.publisher, sd.title, sd.canonical_url, sd.source_type,
+                       sd.enabled, sd.trust_tier, sd.adapter_key, sd.created_at,
+                       MAX(ss.retrieved_at) AS last_retrieved_at, COUNT(ss.id) AS snapshot_count
+                FROM source_documents sd
+                LEFT JOIN source_snapshots ss ON ss.source_document_id = sd.id
+                GROUP BY sd.id
+                ORDER BY MAX(ss.retrieved_at) DESC NULLS LAST, sd.title
+                LIMIT 200
+                """
+            )
+            sources = [
+                {
+                    "id": row["slug"], "publisher": row["publisher"], "title": row["title"],
+                    "url": row["canonical_url"], "type": row["source_type"], "enabled": row["enabled"],
+                    "trustTier": row["trust_tier"], "adapter": row["adapter_key"],
+                    "createdAt": row["created_at"].isoformat(),
+                    "lastRetrievedAt": row["last_retrieved_at"].isoformat() if row["last_retrieved_at"] else None,
+                    "snapshotCount": row["snapshot_count"],
+                }
+                for row in cursor.fetchall()
+            ]
+            return {"runs": runs, "duplicates": duplicates, "sources": sources}
+
+    dataset = load_dataset()
+    return {
+        "runs": [],
+        "duplicates": [],
+        "sources": [
+            {
+                "id": source["id"], "publisher": source["publisher"], "title": source["title"],
+                "url": source["url"], "type": source["type"], "enabled": True, "trustTier": "A",
+                "adapter": None, "createdAt": source["retrievedAt"], "lastRetrievedAt": source["retrievedAt"],
+                "snapshotCount": 1,
+            }
+            for source in dataset["sources"]
+        ],
+    }
+
+
 def parse_detected_at(task: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(task["detectedAt"])
 

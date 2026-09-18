@@ -282,8 +282,18 @@ a.card:hover { transform: translateY(-4px); background: var(--white); }
 
 .admin-shell { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 1.5rem; }
 .admin-nav { padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--white); align-self: start; }
-.admin-nav a { display: block; padding: .65rem .75rem; border-radius: 9px; color: var(--ink-soft); font-size: .86rem; }
-.admin-nav a.active { color: var(--teal-dark); background: var(--teal-light); font-weight: 750; }
+.admin-nav button { display: flex; align-items: center; width: 100%; gap: .45rem; padding: .65rem .75rem; border: 0; border-radius: 9px; background: transparent; color: var(--ink-soft); font-size: .86rem; text-align: left; cursor: pointer; }
+.admin-nav button.active { color: var(--teal-dark); background: var(--teal-light); font-weight: 750; }
+.admin-section-heading { margin: 0 0 1.2rem; }
+.admin-section-heading h2 { margin: 0; font-family: var(--serif); font-size: 2rem; font-weight: 500; }
+.admin-section-heading p { margin: .35rem 0 0; color: var(--ink-soft); }
+.admin-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--white); }
+.admin-table { width: 100%; border-collapse: collapse; min-width: 700px; }
+.admin-table th, .admin-table td { padding: .85rem 1rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: .82rem; }
+.admin-table th { color: var(--ink-soft); font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; }
+.admin-table tr:last-child td { border-bottom: 0; }
+.admin-table small { display: block; margin-top: .25rem; color: var(--ink-soft); }
+.admin-table a { color: var(--teal-dark); }
 .review-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .review-card { margin-bottom: .8rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--white); }
 .review-card header { display: flex; justify-content: space-between; gap: 1rem; }
@@ -341,6 +351,7 @@ a.card:hover { transform: translateY(-4px); background: var(--white); }
   .fact:nth-child(even) { padding-left: 0; border-left: 0; }
   .admin-shell { grid-template-columns: 1fr; }
   .admin-nav { display: flex; overflow-x: auto; }
+  .admin-nav button { width: auto; white-space: nowrap; }
   .footer-grid { display: block; }
 }
 

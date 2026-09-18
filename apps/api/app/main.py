@@ -11,6 +11,7 @@ from .repository import (
     changes_between,
     database_check,
     database_enabled,
+    admin_overview,
     decide_review_task,
     get_edge,
     get_node,
@@ -122,6 +123,11 @@ def changes(
 @app.get("/v1/admin/review-tasks", response_model=list[ReviewTask], dependencies=[Depends(require_admin)])
 def admin_review_tasks() -> list[ReviewTask]:
     return [ReviewTask(**{**task, "detected_at": parse_detected_at(task)}) for task in review_tasks()]
+
+
+@app.get("/v1/admin/overview", dependencies=[Depends(require_admin)])
+def admin_overview_endpoint() -> dict:
+    return admin_overview()
 
 
 @app.post("/v1/admin/review-tasks/{task_id}/decision", dependencies=[Depends(require_admin)])

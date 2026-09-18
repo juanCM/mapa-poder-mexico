@@ -9,6 +9,13 @@ export async function getAdminUser() {
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
 
+  // Bypass temporal sólo para validar la consola en la máquina local. Nunca se
+  // habilita en una compilación de producción, incluso si la variable llegara
+  // a configurarse accidentalmente en Vercel.
+  if (process.env.NODE_ENV !== "production" && process.env.ADMIN_BYPASS_AUTH === "true") {
+    return { email: allowlist[0] ?? "admin@localhost", preview: true };
+  }
+
   if (!url || !key) {
     return process.env.NODE_ENV === "development"
       ? { email: "demo@localhost", preview: true }

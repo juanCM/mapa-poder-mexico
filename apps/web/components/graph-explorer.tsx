@@ -5,7 +5,7 @@ import Graph from "graphology";
 import type SigmaInstance from "sigma";
 import { CalendarDays, ExternalLink, List, Network, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GraphEdge, GraphMode, GraphNode } from "@mapa/contracts";
+import type { GraphEdge, GraphMode, GraphNode, GraphResponse } from "@mapa/contracts";
 import { formatDate, hrefForNode } from "@/lib/data";
 
 const branchColors: Record<string, string> = {
@@ -18,14 +18,18 @@ const branchColors: Record<string, string> = {
 
 type Selection = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge };
 
-export function GraphExplorer({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
+export function GraphExplorer({ initialGraph, initialError }: { initialGraph: GraphResponse; initialError?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<SigmaInstance | null>(null);
-  const [mode, setMode] = useState<GraphMode>("power");
+  const [graphData, setGraphData] = useState(initialGraph);
+  const [mode, setMode] = useState<GraphMode>(initialGraph.mode);
   const [branches, setBranches] = useState(() => new Set(["state", "executive", "legislative", "judicial", "independent"]));
-  const [selection, setSelection] = useState<Selection | null>({ kind: "edge", edge: edges.find((edge) => edge.id === "rel-asf-ejecutivo") ?? edges[0] });
+  const [selection, setSelection] = useState<Selection | null>({ kind: "edge", edge: initialGraph.edges.find((edge) => edge.id === "rel-asf-ejecutivo") ?? initialGraph.edges[0] });
   const [showTable, setShowTable] = useState(false);
-  const [asOf, setAsOf] = useState("2026-09-17");
+  const [asOf, setAsOf] = useState(initialGraph.asOf);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(initialError);
+  const { nodes, edges } = graphData;
 
   const visibleEdges = useMemo(() => edges.filter((edge) => edge.mode === mode || edge.mode === "both"), [edges, mode]);
   const connectedIds = useMemo(() => new Set(visibleEdges.flatMap((edge) => [edge.source, edge.target])), [visibleEdges]);
@@ -102,6 +106,24 @@ export function GraphExplorer({ nodes, edges }: { nodes: GraphNode[]; edges: Gra
     });
   }
 
+  async function loadGraph(nextMode: GraphMode, nextAsOf: string) {
+    setMode(nextMode);
+    setAsOf(nextAsOf);
+    setIsLoading(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`/api/graph?mode=${encodeURIComponent(nextMode)}&asOf=${encodeURIComponent(nextAsOf)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`La API respondió con ${response.status}.`);
+      const nextGraph = await response.json() as GraphResponse;
+      setGraphData(nextGraph);
+      setSelection(nextGraph.edges[0] ? { kind: "edge", edge: nextGraph.edges[0] } : null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No fue posible actualizar el grafo.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   return (
     <>
       <div className="map-layout">
@@ -109,13 +131,13 @@ export function GraphExplorer({ nodes, edges }: { nodes: GraphNode[]; edges: Gra
           <div className="control-group">
             <span className="control-title">Vista</span>
             <div className="segmented">
-              <button className={mode === "organization" ? "active" : ""} onClick={() => setMode("organization")}>Organigrama</button>
-              <button className={mode === "power" ? "active" : ""} onClick={() => setMode("power")}>Poder</button>
+              <button className={mode === "organization" ? "active" : ""} onClick={() => void loadGraph("organization", asOf)} disabled={isLoading}>Organigrama</button>
+              <button className={mode === "power" ? "active" : ""} onClick={() => void loadGraph("power", asOf)} disabled={isLoading}>Poder</button>
             </div>
           </div>
           <div className="control-group">
             <label htmlFor="as-of"><CalendarDays size={13} /> Fecha de consulta</label>
-            <input id="as-of" type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} style={{ width: "100%" }} />
+            <input id="as-of" type="date" value={asOf} onChange={(event) => void loadGraph(mode, event.target.value)} style={{ width: "100%" }} disabled={isLoading} />
           </div>
           <div className="control-group">
             <span className="control-title">Poder o categoría</span>
@@ -144,7 +166,7 @@ export function GraphExplorer({ nodes, edges }: { nodes: GraphNode[]; edges: Gra
 
         <div className="map-canvas-wrap">
           <div ref={containerRef} className="map-canvas" role="img" aria-label={`Mapa de ${mode === "power" ? "facultades" : "estructura"} del Gobierno Federal`} />
-          <span className="map-watermark"><Network size={12} /> {visibleNodes.length} nodos · {visibleEdges.length} relaciones · corte {asOf}</span>
+          <span className="map-watermark"><Network size={12} /> {visibleNodes.length} nodos · {visibleEdges.length} relaciones · corte {asOf}{isLoading ? " · actualizando…" : ""}</span>
         </div>
 
         <aside className="map-detail" aria-live="polite">
@@ -178,6 +200,8 @@ export function GraphExplorer({ nodes, edges }: { nodes: GraphNode[]; edges: Gra
           )}
         </aside>
       </div>
+
+      {error && <p className="notice"><strong>Datos no disponibles:</strong> {error}</p>}
 
       {showTable && (
         <div className="section-sm" style={{ overflowX: "auto" }}>
