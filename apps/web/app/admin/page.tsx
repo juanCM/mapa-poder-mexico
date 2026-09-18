@@ -1,15 +1,47 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Activity, Database, GitMerge, ShieldCheck } from "lucide-react";
-import { AdminReviewBoard } from "@/components/admin-review-board";
+import { ShieldCheck } from "lucide-react";
+import { AdminDashboard, type AdminOverview } from "@/components/admin-dashboard";
 import { getAdminUser } from "@/lib/admin";
-import { dataset } from "@/lib/data";
+import type { ReviewTask } from "@mapa/contracts";
 
 export const dynamic = "force-dynamic";
+
+function adminHeaders(): Record<string, string> {
+  return process.env.ADMIN_API_TOKEN ? { Authorization: `Bearer ${process.env.ADMIN_API_TOKEN}` } : {};
+}
+
+async function loadReviewTasks(): Promise<{ tasks: ReviewTask[]; error?: string }> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!apiUrl) return { tasks: [], error: "La URL de la API no está configurada." };
+
+  try {
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/admin/review-tasks`, {
+      cache: "no-store", headers: adminHeaders()
+    });
+    if (!response.ok) return { tasks: [], error: `La API respondió con ${response.status}.` };
+    const tasks = await response.json() as ReviewTask[];
+    return { tasks };
+  } catch {
+    return { tasks: [], error: "No fue posible conectar con la API local." };
+  }
+}
+
+async function loadAdminOverview(): Promise<{ overview: AdminOverview; error?: string }> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const empty: AdminOverview = { runs: [], duplicates: [], sources: [] };
+  if (!apiUrl) return { overview: empty, error: "La URL de la API no está configurada." };
+  try {
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/admin/overview`, { cache: "no-store", headers: adminHeaders() });
+    if (!response.ok) return { overview: empty, error: `La API respondió con ${response.status}.` };
+    return { overview: await response.json() as AdminOverview };
+  } catch { return { overview: empty, error: "No fue posible conectar con la API local." }; }
+}
 
 export default async function AdminPage() {
   const user = await getAdminUser();
   if (!user) redirect("/admin/login");
+  const [{ tasks, error: taskError }, { overview, error: overviewError }] = await Promise.all([loadReviewTasks(), loadAdminOverview()]);
+  const error = taskError ?? overviewError;
   return (
     <div className="container">
       <header className="page-hero">
@@ -17,16 +49,9 @@ export default async function AdminPage() {
         <h1 className="page-title">Revisión y publicación</h1>
         <p className="page-intro">Sesión: {user.email}. Cada decisión queda registrada; aprobar un candidato no modifica ni elimina su fuente.</p>
       </header>
-      {user.preview && <div className="notice"><strong>Modo demostración:</strong> configura Supabase y `ADMIN_EMAIL_ALLOWLIST` para activar autenticación real y persistir decisiones.</div>}
-      <div className="admin-shell">
-        <nav className="admin-nav" aria-label="Administración">
-          <Link href="/admin" className="active"><ShieldCheck size={14} /> Revisión</Link>
-          <Link href="/admin"><Activity size={14} /> Ejecuciones</Link>
-          <Link href="/admin"><GitMerge size={14} /> Duplicados</Link>
-          <Link href="/admin"><Database size={14} /> Fuentes</Link>
-        </nav>
-        <AdminReviewBoard initialTasks={dataset.reviewTasks} />
-      </div>
+      {user.preview && <div className="notice"><strong>Acceso local temporal:</strong> el bypass está activo sólo para validar la consola. Los datos mostrados provienen de la API y PostgreSQL.</div>}
+      {error && <div className="notice"><strong>Datos no disponibles:</strong> {error}</div>}
+      <AdminDashboard initialTasks={tasks} overview={overview} />
       <div className="section-sm" />
     </div>
   );
